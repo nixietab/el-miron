@@ -60,18 +60,19 @@ async def play(ctx, *, search: str):
 
     voice_client = ctx.voice_client
 
-    # Check if the input is a URL and handle it accordingly
-    if re.match(r'^https?://', search):
+    # Check if the input is a valid YouTube URL
+    if re.match(r'https?://(www\.)?(youtube\.com|youtu\.?be)/.+', search):
         # Direct URL
         async with ctx.typing():
-            player = discord.FFmpegPCMAudio(search, **ffmpeg_options)
-            title = os.path.basename(search)  # Get just the filename from the URL
+            player = await YTDLSource.from_url(search, loop=bot.loop, stream=True)
+            title = player.title
             queue.append((player, title))
     else:
         # YouTube search
         async with ctx.typing():
             player = await YTDLSource.from_url(f"ytsearch:{search}", loop=bot.loop, stream=True)
-            queue.append((player, player.title))
+            title = player.title
+            queue.append((player, title))
 
     if not voice_client.is_playing():
         await start_playback(ctx)
