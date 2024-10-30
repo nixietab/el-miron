@@ -20,6 +20,7 @@ language_outputs = config.get("language_outputs", {})
 
 ytdl = youtube_dl.YoutubeDL(ytdl_format_options)
 queue = []
+is_counting_down = False  # Flag to track if the bot is counting down
 
 class YTDLSource(discord.PCMVolumeTransformer):
     def __init__(self, source, *, data, volume=0.5):
@@ -47,6 +48,7 @@ async def on_ready():
 
 @bot.command(name='p', help='Plays a song from YouTube or a direct URL')
 async def play(ctx, *, search: str):
+    global is_counting_down  # Use the global flag
     # Ensure the user is in a voice channel
     if ctx.author.voice is None:
         await ctx.send(language_outputs["not_in_voice_channel"])
@@ -63,7 +65,6 @@ async def play(ctx, *, search: str):
         # Direct URL
         async with ctx.typing():
             player = discord.FFmpegPCMAudio(search, **ffmpeg_options)
-            # Extract the filename from the URL
             title = os.path.basename(search)  # Get just the filename from the URL
             queue.append((player, title))
     else:
@@ -80,21 +81,34 @@ async def play(ctx, *, search: str):
         await ctx.send(embed=embed)
 
 async def start_playback(ctx):
+    global is_counting_down  # Use the global flag
     if queue:
+        is_counting_down = False  # Reset countdown flag when starting playback
         player, title = queue.pop(0)
         ctx.voice_client.play(player, after=lambda e: bot.loop.create_task(play_next(ctx)) if e is None else print(f'Player error: {e}'))
         
-        # Embed message with thumbnail for the currently playing song
         embed = discord.Embed(title=language_outputs["now_playing"], description=title, color=0x00ff00)
         if isinstance(player, YTDLSource):
             embed.set_thumbnail(url=player.thumbnail)  # Show the thumbnail if from YouTube
         await ctx.send(embed=embed)
     else:
-        await ctx.voice_client.disconnect()
+        await handle_empty_queue(ctx)
 
 async def play_next(ctx):
     if queue:
         await start_playback(ctx)
+    else:
+        await handle_empty_queue(ctx)
+
+async def handle_empty_queue(ctx):
+    global is_counting_down  # Use the global flag
+    if not is_counting_down:
+        is_counting_down = True  # Set the countdown flag
+        await ctx.send(language_outputs["queue_empty"])  # Notify that the queue is empty
+        await asyncio.sleep(3)  # Wait for 3 seconds
+        if is_counting_down:  # Check if still counting down before disconnecting
+            await ctx.voice_client.disconnect()
+            is_counting_down = False  # Reset the countdown flag
 
 @bot.command(name='skip', help='Skips the current song')
 async def skip(ctx):
