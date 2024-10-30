@@ -1,0 +1,26 @@
+{
+    "token": "here is where you put your token",
+    "ffmpeg_options": {
+        "options": "-vn"
+    },
+    "ytdl_format_options": {
+        "format": "bestaudio/best",
+        "outtmpl": "downloads/%(extractor)s-%(id)s-%(title)s.%(ext)s",
+        "restrictfilenames": true,
+        "noplaylist": true,
+        "nocheckcertificate": true,
+        "ignoreerrors": false,
+        "quiet": true,
+        "no_warnings": true,
+        "default_search": "auto",
+        "source_address": "0.0.0.0"
+    },
+    "language_outputs": {
+        "not_in_voice_channel": "You need to be in a voice channel to use this command. 👽",
+        "song_added": "Added to queue 👽",
+        "now_playing": "Now playing 👽",
+        "song_skipped": "Song skipped. 👽",
+        "no_song_playing": "No song is currently playing. 👽",
+        "music_stopped": "Music stopped and the queue is cleared. 👽"
+    }
+}
