@@ -1,4 +1,4 @@
-# el-miron
+# El Miron
 This is a simple music bot for Discord designed for personal use. As it’s intended for my own purposes, there won’t be detailed documentation provided for others. However, the bot functions perfectly.
 
 
