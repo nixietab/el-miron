@@ -90,10 +90,14 @@ async def start_playback(ctx):
         player, title = queue.pop(0)
         ctx.voice_client.play(player, after=lambda e: bot.loop.create_task(play_next(ctx)) if e is None else print(f'Player error: {e}'))
         
+        # Send the "Now Playing" embed
         embed = discord.Embed(title=language_outputs["now_playing"], description=title, color=0x00ff00)
         if isinstance(player, YTDLSource):
             embed.set_thumbnail(url=player.thumbnail)
         await ctx.send(embed=embed)
+        
+        # Set Rich Presence to show the currently playing song
+        await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name=title))
     else:
         await handle_empty_queue(ctx)
 
@@ -112,7 +116,17 @@ async def handle_empty_queue(ctx):
         if is_counting_down and ctx.voice_client:
             await ctx.voice_client.disconnect()
         is_counting_down = False
+        # Clear the Rich Presence when queue is empty
+        await bot.change_presence(activity=None)
 
+# Make sure to reset presence when the bot starts up
+@bot.event
+async def on_ready():
+    print(f'Bot connected as {bot.user}')
+    await bot.change_presence(activity=None)  # Clear Rich Presence on startup
+
+
+    
 @bot.command(name='skip', help='Skips the current song')
 async def skip(ctx):
     if ctx.voice_client.is_playing():
