@@ -110,6 +110,8 @@ async def start_playback(ctx):
     if queue:
         is_counting_down = False
         player, title = queue.pop(0)
+        
+        # Attempt to play the audio
         ctx.voice_client.play(player, after=lambda e: bot.loop.create_task(play_next(ctx)) if e is None else print(f'Player error: {e}'))
         
         # Update stats
@@ -123,16 +125,20 @@ async def start_playback(ctx):
         # Log the playback start
         logging.info(f'Now playing: "{title}". Total songs played: {stats["total_songs_played"]}. Total hours played: {round(stats["total_hours_played"], 2)} hours.')
 
-        # Send the "Now Playing" embed
+        # Prepare the "Now Playing" embed
         embed = discord.Embed(title=language_outputs["now_playing"], description=title, color=0x00ff00)
         if isinstance(player, YTDLSource):
             embed.set_thumbnail(url=player.thumbnail)
-        await ctx.send(embed=embed)
-        
-        await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name=title))
+
+        # Send the "Now Playing" embed asynchronously
+        asyncio.create_task(ctx.send(embed=embed))
+
+        # Update Discord presence asynchronously
+        asyncio.create_task(bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name=title)))
     else:
         await handle_empty_queue(ctx)
 
+        
 async def play_next(ctx):
     if queue:
         await start_playback(ctx)
@@ -145,10 +151,16 @@ async def handle_empty_queue(ctx):
         is_counting_down = True
         await ctx.send(language_outputs["queue_empty"])
         await asyncio.sleep(3)
-        if is_counting_down and ctx.voice_client:
+        if is_counting_down and ctx.voice_client and not ctx.voice_client.is_connected():
+            try:
+                await ctx.voice_client.connect(reconnect=True)
+            except discord.ClientException:
+                logging.info("Attempted reconnection failed.")
+        elif is_counting_down and ctx.voice_client:
             await ctx.voice_client.disconnect()
         is_counting_down = False
         await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.playing, name=custom_idle_presence))
+
 
 @bot.command(name='skip', help='Skips the current song')
 async def skip(ctx):
