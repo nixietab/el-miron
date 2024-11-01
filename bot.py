@@ -16,6 +16,7 @@ bot = commands.Bot(command_prefix='.', intents=intents)
 ffmpeg_options = config.get("ffmpeg_options", {"options": "-vn"})
 ytdl_format_options = config.get("ytdl_format_options", {"format": "bestaudio/best"})
 language_outputs = config.get("language_outputs", {})
+custom_idle_presence = config.get("custom_idle_presence", "Listening for commands 👽")
 
 ytdl = youtube_dl.YoutubeDL(ytdl_format_options)
 queue = []
@@ -46,6 +47,8 @@ class YTDLSource(discord.PCMVolumeTransformer):
 @bot.event
 async def on_ready():
     print(f'Bot connected as {bot.user}')
+    # Set the initial idle presence
+    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.playing, name=custom_idle_presence))
 
 @bot.command(name='p', help='Plays a song from YouTube or a direct URL')
 async def play(ctx, *, search: str):
@@ -116,17 +119,9 @@ async def handle_empty_queue(ctx):
         if is_counting_down and ctx.voice_client:
             await ctx.voice_client.disconnect()
         is_counting_down = False
-        # Clear the Rich Presence when queue is empty
-        await bot.change_presence(activity=None)
+        # Set the custom idle Rich Presence when queue is empty
+        await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.playing, name=custom_idle_presence))
 
-# Make sure to reset presence when the bot starts up
-@bot.event
-async def on_ready():
-    print(f'Bot connected as {bot.user}')
-    await bot.change_presence(activity=None)  # Clear Rich Presence on startup
-
-
-    
 @bot.command(name='skip', help='Skips the current song')
 async def skip(ctx):
     if ctx.voice_client.is_playing():
@@ -140,6 +135,8 @@ async def stop(ctx):
     queue.clear()
     if ctx.voice_client:
         await ctx.voice_client.disconnect()
+    # Set the custom idle Rich Presence when music stops
+    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.playing, name=custom_idle_presence))
     await ctx.send(language_outputs["music_stopped"])
 
 bot.run(config['token'])
