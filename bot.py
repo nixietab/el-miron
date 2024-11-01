@@ -81,10 +81,17 @@ async def play(ctx, *, search: str):
 
     voice_client = ctx.voice_client
     is_youtube_url = re.match(r'https?://(www\.)?(youtube\.com|youtu\.?be)/.+', search)
+    is_direct_url = re.match(r'https?://.+\.(mp3|wav|ogg|flac|mp4)', search)  # Add other formats if needed
 
     async with ctx.typing():
         try:
-            query = search if is_youtube_url else f"ytsearch:{search}"
+            if is_youtube_url:
+                query = search
+            elif is_direct_url:
+                query = search
+            else:
+                query = f"ytsearch:{search}"
+
             player = await YTDLSource.from_url(query, loop=bot.loop, stream=True)
             
             if player is None:
@@ -104,6 +111,7 @@ async def play(ctx, *, search: str):
         embed = discord.Embed(title=language_outputs["song_added"], description=title, color=0x00ff00)
         embed.set_thumbnail(url=player.thumbnail)
         await ctx.send(embed=embed)
+
 
 async def start_playback(ctx):
     global is_counting_down
@@ -138,7 +146,7 @@ async def start_playback(ctx):
     else:
         await handle_empty_queue(ctx)
 
-        
+
 async def play_next(ctx):
     if queue:
         await start_playback(ctx)
