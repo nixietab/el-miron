@@ -1,5 +1,5 @@
 {
-    "token": "here is where you put your token",
+    "token": "token here",
     "ffmpeg_options": {
         "options": "-vn"
     },
@@ -21,7 +21,8 @@
         "now_playing": "Now playing 👽",
         "song_skipped": "Song skipped. 👽",
         "no_song_playing": "No song is currently playing. 👽",
-        "music_stopped": "Music stopped and the queue is cleared. 👽"
+        "music_stopped": "Music stopped and the queue is cleared. 👽",
         "queue_empty": "This bogos are so binted 3 seconds..."
-    }
+    },
+    "custom_idle_presence": "Zeeke Zooble 👽"
 }
