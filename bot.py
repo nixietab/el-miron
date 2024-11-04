@@ -12,14 +12,17 @@ with open('config.json') as config_file:
     config = json.load(config_file)
 
 # Load or initialize statistics from stats.json
-if os.path.exists('stats.json'):
-    with open('stats.json') as stats_file:
+stats_path = 'stats.json'
+if os.path.exists(stats_path):
+    with open(stats_path) as stats_file:
         stats = json.load(stats_file)
 else:
     stats = {
         "total_songs_played": 0,
         "total_hours_played": 0.0
     }
+    with open(stats_path, 'w') as stats_file:
+        json.dump(stats, stats_file)
 
 # Set up logging to bot.log file
 logging.basicConfig(
@@ -127,7 +130,7 @@ async def start_playback(ctx):
         stats["total_hours_played"] += player.duration / 3600  # Convert seconds to hours
 
         # Save stats to file
-        with open('stats.json', 'w') as stats_file:
+        with open(stats_path, 'w') as stats_file:
             json.dump(stats, stats_file)
 
         # Log the playback start
