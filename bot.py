@@ -11,6 +11,9 @@ import logging
 with open('config.json') as config_file:
     config = json.load(config_file)
 
+blocked_users = config.get("blocked_users", [])
+language_outputs = config.get("language_outputs", {})
+
 # Load or initialize statistics from stats.json
 stats_path = 'stats.json'
 if os.path.exists(stats_path):
@@ -35,7 +38,7 @@ intents = discord.Intents.all()
 bot = commands.Bot(command_prefix='.', intents=intents)
 
 ffmpeg_options = config.get("ffmpeg_options", {"options": "-vn"})
-ytdl_format_options = config.get("ytdl_format_options", {"format": "bestaudio/best", "retries": 3,  "nocheckcertificate": True})
+ytdl_format_options = config.get("ytdl_format_options", {"format": "bestaudio/best", "retries": 3, "nocheckcertificate": True})
 language_outputs = config.get("language_outputs", {})
 custom_idle_presence = config.get("custom_idle_presence", "Listening for commands 👽")
 
@@ -73,6 +76,10 @@ async def on_ready():
 
 @bot.command(name='p', help='Plays a song from YouTube or a direct URL')
 async def play(ctx, *, search: str):
+    if ctx.author.id in blocked_users:
+        await ctx.send(language_outputs.get("blocked_user", "You are not allowed to use this bot."))
+        return
+
     global is_counting_down
     if ctx.author.voice is None:
         await ctx.send(language_outputs["not_in_voice_channel"])
@@ -172,22 +179,34 @@ async def handle_empty_queue(ctx):
         is_counting_down = False
         await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.playing, name=custom_idle_presence))
 
-
 @bot.command(name='skip', help='Skips the current song')
 async def skip(ctx):
-    if ctx.voice_client.is_playing():
+    if ctx.author.id in blocked_users:
+        print(f"Blocked user {ctx.author.id} tried to skip.")  # Debug: Log blocked access attempt
+        if "blocked_message" in language_outputs:
+            await ctx.send(language_outputs["blocked_message"])
+        else:
+            await ctx.send("You are blocked from using this bot.")  # Fallback message
+        return
+
+    # Continue with command if not blocked
+    if ctx.voice_client and ctx.voice_client.is_playing():
         ctx.voice_client.stop()
-        await ctx.send(language_outputs["song_skipped"])
+        await ctx.send(language_outputs.get("song_skipped", "Song skipped. 👽"))
         logging.info("Song skipped by user.")
     else:
-        await ctx.send(language_outputs["no_song_playing"])
+        await ctx.send(language_outputs.get("no_song_playing", "No song is currently playing. 👽"))
 
 @bot.command(name='stop', help='Stops the music and clears the queue')
 async def stop(ctx):
+    if ctx.author.id in blocked_users:
+        await ctx.send(language_outputs["blocked_message"])
+        return
+
     queue.clear()
     if ctx.voice_client:
         await ctx.voice_client.disconnect()
-    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.playing, name=custom_idle_presence))
+    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.playing, name=config["custom_idle_presence"]))
     await ctx.send(language_outputs["music_stopped"])
     logging.info("Music stopped and queue cleared.")
 
