@@ -217,4 +217,35 @@ async def stats_command(ctx):
     await ctx.send(f"Total songs played: {total_songs}\nTotal hours played: {total_hours} hours")
     logging.info(f".stats command called. Total songs played: {total_songs}. Total hours played: {total_hours} hours.")
 
+@bot.command(name='queue', help='Shows the current song and the queue')
+async def show_queue(ctx):
+    # Check if the user is blocked
+    if ctx.author.id in blocked_users:
+        await ctx.send(language_outputs.get("blocked_user", "You are not allowed to use this bot."))
+        return
+
+    # Check if the queue is empty and nothing is playing
+    if not queue and not ctx.voice_client.is_playing():
+        empty_queue_message = language_outputs.get("empty_queue", "The queue is currently empty.")
+        await ctx.send(empty_queue_message)
+        return
+
+    # Create the embed for the queue
+    embed = discord.Embed(title=language_outputs.get("queue_title", "Music Queue 🎶"), color=0x00ff00)
+
+    # Add the currently playing song
+    if ctx.voice_client.is_playing():
+        now_playing_title = queue[0][1] if queue else language_outputs.get("no_song_playing", "No song is currently playing.")
+        embed.add_field(name=language_outputs.get("currently_playing", "Currently Playing:"), value=now_playing_title, inline=False)
+
+    # Add the queue list in a numbered format
+    if queue:
+        queue_list = "\n".join([f"{i+1}. {song[1]}" for i, song in enumerate(queue)])
+        embed.add_field(name=language_outputs.get("up_next", "Up Next:"), value=queue_list, inline=False)
+    else:
+        embed.add_field(name=language_outputs.get("up_next", "Up Next:"), value=language_outputs.get("no_songs_in_queue", "No songs in the queue."), inline=False)
+
+    # Send the embed message
+    await ctx.send(embed=embed)
+
 bot.run(config['token'])
