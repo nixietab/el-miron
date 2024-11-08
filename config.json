@@ -23,8 +23,14 @@
         "song_skipped": "Song skipped. 👽",
         "no_song_playing": "No song is currently playing. 👽",
         "music_stopped": "Music stopped and the queue is cleared. 👽",
+        "currently_playing": "Currently Playing:",
+        "queue_title": "Music Queue 🎶",
+        "no_song_playing": "No song is currently playing.",
         "queue_empty": "This bogos are so binted 3 seconds...",
-        "blocked_user": "You are not allowed to use this bot."
+        "queue_empty_ask": "The queue is empty.",
+        "blocked_user": "You are not allowed to use this bot.",
+        "up_next": "Up Next:",
+        "no_songs_in_queue": "No songs in the queue."
     },
     "custom_idle_presence": "Zeeke Zooble 👽"
 }
