@@ -233,15 +233,23 @@ async def show_queue(ctx):
     # Create the embed for the queue
     embed = discord.Embed(title=language_outputs.get("queue_title", "Music Queue 🎶"), color=0x00ff00)
 
-    # Add the currently playing song
-    if ctx.voice_client.is_playing():
-        now_playing_title = queue[0][1] if queue else language_outputs.get("no_song_playing", "No song is currently playing.")
-        embed.add_field(name=language_outputs.get("currently_playing", "Currently Playing:"), value=now_playing_title, inline=False)
+    # Retrieve the currently playing song from voice client source
+    currently_playing_title = getattr(ctx.voice_client.source, "title", None)
 
-    # Add the queue list in a numbered format
+    # Display the currently playing song if available
+    if currently_playing_title:
+        embed.add_field(name=language_outputs.get("currently_playing", "Currently Playing:"), value=currently_playing_title, inline=False)
+    else:
+        embed.add_field(name=language_outputs.get("currently_playing", "Currently Playing:"), value=language_outputs.get("no_song_playing", "No song is currently playing."), inline=False)
+
+    # Display the queue list, excluding the currently playing song if it matches the first song in the queue
     if queue:
-        queue_list = "\n".join([f"{i+1}. {song[1]}" for i, song in enumerate(queue)])
-        embed.add_field(name=language_outputs.get("up_next", "Up Next:"), value=queue_list, inline=False)
+        # Start the queue display after the currently playing song if it matches the first in the queue
+        up_next_songs = queue[1:] if currently_playing_title and queue[0][1] == currently_playing_title else queue
+        queue_list = "\n".join([f"{i+1}. {song[1]}" for i, song in enumerate(up_next_songs)])
+        
+        if queue_list:
+            embed.add_field(name=language_outputs.get("up_next", "Up Next:"), value=queue_list, inline=False)
     else:
         embed.add_field(name=language_outputs.get("up_next", "Up Next:"), value=language_outputs.get("no_songs_in_queue", "No songs in the queue."), inline=False)
 
