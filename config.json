@@ -32,5 +32,7 @@
         "up_next": "Up Next:",
         "no_songs_in_queue": "No songs in the queue."
     },
-    "custom_idle_presence": "Zeeke Zooble 👽"
+    "custom_idle_presence": "Zeeke Zooble 👽",
+    "check_updates": true
+
 }
