@@ -1,6 +1,7 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 import yt_dlp as youtube_dl
+import aiohttp
 import asyncio
 import re
 import os
@@ -73,8 +74,10 @@ class YTDLSource(discord.PCMVolumeTransformer):
 async def on_ready():
     logging.info(f'Bot connected as {bot.user}')
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.playing, name=custom_idle_presence))
+    print(f"Bot is online! Credits: Bot developed by Nixietab. GitHub: https://github.com/nixietab/el-miron")
+    scheduled_version_check.start()
 
-@bot.command(name='p', help='Plays a song from YouTube or a direct URL')
+@bot.command(name='p', help='Plays a song or playlist from YouTube or a direct URL')
 async def play(ctx, *, search: str):
     if ctx.author.id in blocked_users:
         await ctx.send(language_outputs.get("blocked_user", "You are not allowed to use this bot."))
@@ -92,36 +95,91 @@ async def play(ctx, *, search: str):
     voice_client = ctx.voice_client
     is_youtube_url = re.match(r'https?://(www\.)?(youtube\.com|youtu\.?be)/.+', search)
     is_direct_url = re.match(r'https?://.+\.(mp3|wav|ogg|flac|mp4)', search)  # Add other formats if needed
+    is_playlist = "list=" in search  # Detect if the URL has a playlist parameter
 
     async with ctx.typing():
         try:
-            if is_youtube_url:
-                query = search
-            elif is_direct_url:
-                query = search
-            else:
-                query = f"ytsearch:{search}"
+            if is_youtube_url and is_playlist:
+                # Handle playlists by retrieving all videos in the playlist
+                playlist_tracks = await load_playlist(search)
+                if not playlist_tracks:
+                    await ctx.send("No tracks found in the playlist.")
+                    return
 
-            player = await YTDLSource.from_url(query, loop=bot.loop, stream=True)
+                # Add each track from the playlist to the queue
+                for player in playlist_tracks:
+                    queue.append((player, player.title))
+                    logging.info(f'Added "{player.title}" to queue.')
+                
+                await ctx.send(f"Added {len(playlist_tracks)} tracks from the playlist to the queue.")
             
-            if player is None:
-                await ctx.send("Failed to retrieve data from the URL.")
-                return
-            
-            title = player.title
-            queue.append((player, title))
-            logging.info(f'Added "{title}" to queue.')
+            elif is_youtube_url:
+                # Single YouTube video
+                player = await YTDLSource.from_url(search, loop=bot.loop, stream=True)
+                if player is None:
+                    await ctx.send("Failed to retrieve data from the URL.")
+                    return
+                queue.append((player, player.title))
+                logging.info(f'Added "{player.title}" to queue.')
+
+            elif is_direct_url:
+                # Direct URL
+                player = await YTDLSource.from_url(search, loop=bot.loop, stream=True)
+                if player is None:
+                    await ctx.send("Failed to retrieve data from the URL.")
+                    return
+                queue.append((player, player.title))
+                logging.info(f'Added "{player.title}" to queue.')
+
+            else:
+                # Search query
+                player = await YTDLSource.from_url(f"ytsearch:{search}", loop=bot.loop, stream=True)
+                if player is None:
+                    await ctx.send("No results found for the query.")
+                    return
+                queue.append((player, player.title))
+                logging.info(f'Added "{player.title}" to queue.')
+                
         except ValueError:
-            await ctx.send("No results found for the query.")
+            await ctx.send("Error retrieving data.")
             return
 
     if not voice_client.is_playing():
         await start_playback(ctx)
     else:
+        # Notify the user that the track or playlist was added to the queue
+        title = player.title if player else search
         embed = discord.Embed(title=language_outputs["song_added"], description=title, color=0x00ff00)
-        embed.set_thumbnail(url=player.thumbnail)
+        embed.set_thumbnail(url=player.thumbnail if player and hasattr(player, "thumbnail") else "")
         await ctx.send(embed=embed)
 
+
+async def load_playlist(playlist_url):
+    """
+    This function will load all videos from a playlist URL asynchronously.
+    You can use youtube_dl or other methods to fetch video URLs.
+    """
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, lambda: get_playlist_videos(playlist_url))
+
+
+def get_playlist_videos(playlist_url):
+    """
+    Fetch all videos from a YouTube playlist.
+    This function is synchronous because youtube_dl requires synchronous calls.
+    """
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'noplaylist': False,  # This ensures the entire playlist is downloaded
+        'extract_flat': True,  # Prevent downloading video files, just extract the video info
+    }
+
+    with yt_dlp(ydl_opts) as ydl:
+        info_dict = ydl.extract_info(playlist_url, download=False)
+        if 'entries' not in info_dict:
+            return []
+        # Return list of video objects for the playlist
+        return [YTDLSource.from_info(entry, loop=bot.loop) for entry in info_dict['entries']]
 
 async def start_playback(ctx):
     global is_counting_down
@@ -155,6 +213,7 @@ async def start_playback(ctx):
         asyncio.create_task(bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name=title)))
     else:
         await handle_empty_queue(ctx)
+
 
 
 async def play_next(ctx):
@@ -224,6 +283,11 @@ async def show_queue(ctx):
         await ctx.send(language_outputs.get("blocked_user", "You are not allowed to use this bot."))
         return
 
+    # Check if the bot is connected to a voice channel
+    if not ctx.voice_client:
+        await ctx.send(language_outputs.get("not_in_voice_channel", "I am not connected to a voice channel."))
+        return
+
     # Check if the queue is empty and nothing is playing
     if not queue and not ctx.voice_client.is_playing():
         empty_queue_message = language_outputs.get("empty_queue", "The queue is currently empty.")
@@ -255,5 +319,155 @@ async def show_queue(ctx):
 
     # Send the embed message
     await ctx.send(embed=embed)
+
+@bot.command(name='config', help='Displays the current bot configuration')
+async def show_config(ctx):
+    try:
+        with open('config.json') as config_file:
+            config_data = json.load(config_file)
+
+        # Filter the dictionary to include only the specified categories
+        filtered_config = {
+            key: config_data[key]
+            for key in ['ffmpeg_options', 'ytdl_format_options', 'language_outputs']
+            if key in config_data
+        }
+
+        # Prepare the formatted message
+        message = ""
+
+        # Verbosely display ffmpeg_options
+        if 'ffmpeg_options' in filtered_config:
+            message += "## FFmpeg Options:\n"
+            for option, value in filtered_config['ffmpeg_options'].items():
+                message += f"- {option}: {value}\n"
+            message += "\n"
+
+        # Verbosely display ytdl_format_options
+        if 'ytdl_format_options' in filtered_config:
+            message += "## yt-dlp Options:\n"
+            for option, value in filtered_config['ytdl_format_options'].items():
+                message += f"- {option}: {value}\n"
+            message += "\n"
+
+        # Verbosely display language_outputs
+        if 'language_outputs' in filtered_config:
+            message += "## Language Outputs:\n"
+            for language, output in filtered_config['language_outputs'].items():
+                message += f"- {language}: {output}\n"
+            message += "\n"
+
+        # Send the message in chunks if it exceeds 2000 characters
+        if len(message) > 2000:
+            for i in range(0, len(message), 2000):
+                await ctx.send(f"\n{message[i:i+2000]}")
+        else:
+            await ctx.send(f"\n{message}")
+
+    except Exception as e:
+        logging.error(f"Failed to load config.json: {e}")
+        await ctx.send("Error loading the configuration file.")
+
+version_url = 'https://raw.githubusercontent.com/nixietab/el-miron/refs/heads/main/version.json'
+
+# Path to local version.json file
+local_version_file = 'version.json'
+
+# Path to config.json file
+config_file = 'config.json'
+
+# Store the last channel the bot interacted with
+last_interacted_channel = None
+
+# Read the config.json file to check if update checks are enabled
+def read_config():
+    if os.path.exists(config_file):
+        with open(config_file, 'r') as f:
+            config_data = json.load(f)
+            return config_data.get('check_updates', True)
+    return True  # Default to True if config doesn't exist
+
+# Function to read local version from file
+def read_local_version():
+    if os.path.exists(local_version_file):
+        with open(local_version_file, 'r') as f:
+            local_data = json.load(f)
+            return local_data.get('version', None)
+    return None
+
+# Send a version update message to the chosen channel
+async def send_version_message(channel, new_version, local_version):
+    try:
+        # Send the message with emojis, alerts, and both versions
+        await channel.send(
+            f"🚨 **New version available!** 🚨\n\n"
+            f"**New version**: {new_version}\n"
+            f"**Local version**: {local_version}\n\n"
+            f"Check it out here: https://github.com/nixietab/el-miron\n\n"
+            f"🔔 Update is recommended always because discord and youtube integrations are trash! 🔔"
+        )
+    except Exception as e:
+        print(f"Error sending message to channel {channel.name}: {e}")
+
+# Check version function
+async def check_version():
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(version_url) as response:
+                if response.status == 200:
+                    # Read the raw content as text (because GitHub serves it as plain text)
+                    raw_content = await response.text()
+
+                    try:
+                        # Try to parse the raw content as JSON
+                        version_data = json.loads(raw_content)
+                        remote_version = version_data.get("version")
+                        
+                        # Read local version
+                        local_version = read_local_version()
+                        
+                        # Compare versions
+                        if remote_version and local_version:
+                            if remote_version != local_version:
+                                print(f"New version detected! Remote: {remote_version}, Local: {local_version}")
+                                
+                                # Check for the channel to send the update message
+                                for guild in bot.guilds:
+                                    # First, check if there's a 'general' channel
+                                    general_channel = discord.utils.get(guild.text_channels, name="general")
+                                    if general_channel:
+                                        await send_version_message(general_channel, remote_version, local_version)
+                                    # If no 'general' channel, try the last interacted channel
+                                    elif last_interacted_channel:
+                                        await send_version_message(last_interacted_channel, remote_version, local_version)
+                                    # Fallback to the first text channel
+                                    else:
+                                        channel = guild.text_channels[0]
+                                        await send_version_message(channel, remote_version, local_version)
+                            else:
+                                print(f"Version is up-to-date: {local_version}")
+                        else:
+                            print("Failed to get valid version data.")
+                    except json.JSONDecodeError:
+                        print(f"Error: Failed to decode JSON from raw content: {raw_content}")
+                else:
+                    print(f"Failed to fetch version.json. Status code: {response.status}")
+    except Exception as e:
+        print(f"Error while checking version: {e}")
+
+# Event to track the last channel the bot interacted with
+@bot.event
+async def on_message(message):
+    global last_interacted_channel
+    # Only track messages that are not from the bot itself
+    if message.author != bot.user:
+        last_interacted_channel = message.channel
+    await bot.process_commands(message)
+
+# Scheduled task that runs every 24 hours
+@tasks.loop(hours=24)
+async def scheduled_version_check():
+    if read_config():  # Only check version if update checks are enabled in config.json
+        await check_version()
 
 bot.run(config['token'])
