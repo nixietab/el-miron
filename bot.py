@@ -470,4 +470,76 @@ async def scheduled_version_check():
     if read_config():  # Only check version if update checks are enabled in config.json
         await check_version()
 
+voice_check_task = None  # Will hold the reference to the voice channel checking task
+
+
+@bot.command(name='search', help='Searches messages in the current channel and provides links to results')
+async def search_messages(self, ctx, search_term: str):
+        try:
+            # Fetching messages from the channel history with a limit
+            messages = [message async for message in ctx.channel.history(limit=1000) if search_term.lower() in message.content.lower()]
+
+            if not messages:
+                await ctx.send("No messages found with that search term.")
+                return
+
+            # Preparing embed
+            embed = discord.Embed(title=f"Search Results for '{search_term}'", color=discord.Color.blue())
+            embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.avatar.url)
+            
+            # Adding messages to the embed, truncating if necessary
+            for i, message in enumerate(messages[:5]):  # Limit to first 5 results for demonstration
+                content = message.content
+                if len(content) > 1024:
+                    content = content[:1021] + "..."
+                embed.add_field(name=f"Result {i + 1}", value=content, inline=False)
+            
+            await ctx.send(embed=embed)
+
+        except discord.HTTPException as e:
+            await ctx.send("There was an error sending the embed.")
+            print(f"HTTPException: {e}")
+        except Exception as e:
+            await ctx.send("An error occurred while searching messages.")
+            print(f"Exception: {e}")
+
+
+@bot.command(name='fact', help='spreads missinformation')
+async def fact(ctx):
+    fake_facts = [
+        "Bananas are technically fish due to their slippery nature in the ocean of fruit.",
+        "Every time you blink, a new galaxy forms somewhere in the universe.",
+        "The Eiffel Tower was originally built as a giant umbrella stand.",
+        "Cats are secretly in charge of Wi-Fi signal strength in your house.",
+        "The moon is actually made of expired cheese, which is why it’s full of holes.",
+        "Pineapples grow faster when you compliment them daily.",
+        "Sharks invented the internet to coordinate their weekend plans.",
+        "The first version of Microsoft Windows was powered by hamsters on wheels.",
+        "All clouds are just sky whales wearing camouflage.",
+        "Ants have tiny smartphones, but they only use them for selfies.",
+        "Rainbows are just the Earth's way of showing off its collection of shiny stickers.",
+        "Toast was invented when bread tried sunbathing too close to a campfire.",
+        "Turtles secretly hold the world record for fastest creatures; they just don’t want to brag.",
+        "The Great Wall of China was originally a giant dominoes project that got out of hand.",
+        "Penguins wear tuxedos because they moonlight as professional ice dancers.",
+        "The color blue doesn't actually exist; your brain just makes it up as a prank.",
+        "Lightning happens when clouds high-five too hard.",
+        "All mountains are just really stubborn clouds that refused to float away.",
+        "Giraffes’ long necks were originally intended for satellite communication.",
+        "Spaghetti is actually a type of alien plant that escaped to Earth and thrives in boiling water.",
+        "The sun is powered by billions of dancing hamsters in tiny workout gear.",
+        "Snowflakes are handmade by retired sky fairies in their spare time.",
+        "Your socks disappear in the laundry because they are recruited by secret sock ninjas.",
+        "Bicycles can talk, but they only do it when no one’s around to hear them.",
+        "Chocolate was originally discovered when a tree tried to make candy for itself.",
+        "Birds don’t actually fly; they’re pulled upward by invisible strings controlled by squirrels.",
+        "Bread always lands butter-side down because it wants to lick the floor for fun.",
+        "The alphabet was invented by squirrels to organize their acorn stashes.",
+        "Dinosaurs didn’t go extinct; they just got tired of walking and became birds."
+    ]
+    random_fact = random.choice(fake_facts)
+    await ctx.send(f"💡 **Did you know?:** {random_fact}")
+
+
+
 bot.run(config['token'])
