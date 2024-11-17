@@ -4,9 +4,9 @@ import yt_dlp as youtube_dl
 import aiohttp
 import asyncio
 import re
+import random
 import time
 import os
-import random
 import json
 import logging
 
@@ -478,35 +478,36 @@ voice_check_task = None  # Will hold the reference to the voice channel checking
 @bot.command(name='fact', help='spreads missinformation')
 async def fact(ctx):
     fake_facts = [
-        "Bananas are technically fish due to their slippery nature in the ocean of fruit.",
-        "Every time you blink, a new galaxy forms somewhere in the universe.",
-        "The Eiffel Tower was originally built as a giant umbrella stand.",
-        "Cats are secretly in charge of Wi-Fi signal strength in your house.",
-        "The moon is actually made of expired cheese, which is why it’s full of holes.",
-        "Pineapples grow faster when you compliment them daily.",
-        "Sharks invented the internet to coordinate their weekend plans.",
-        "The first version of Microsoft Windows was powered by hamsters on wheels.",
-        "All clouds are just sky whales wearing camouflage.",
-        "Ants have tiny smartphones, but they only use them for selfies.",
-        "Rainbows are just the Earth's way of showing off its collection of shiny stickers.",
-        "Toast was invented when bread tried sunbathing too close to a campfire.",
-        "Turtles secretly hold the world record for fastest creatures; they just don’t want to brag.",
-        "The Great Wall of China was originally a giant dominoes project that got out of hand.",
-        "Penguins wear tuxedos because they moonlight as professional ice dancers.",
-        "The color blue doesn't actually exist; your brain just makes it up as a prank.",
-        "Lightning happens when clouds high-five too hard.",
-        "All mountains are just really stubborn clouds that refused to float away.",
-        "Giraffes’ long necks were originally intended for satellite communication.",
-        "Spaghetti is actually a type of alien plant that escaped to Earth and thrives in boiling water.",
-        "The sun is powered by billions of dancing hamsters in tiny workout gear.",
-        "Snowflakes are handmade by retired sky fairies in their spare time.",
-        "Your socks disappear in the laundry because they are recruited by secret sock ninjas.",
-        "Bicycles can talk, but they only do it when no one’s around to hear them.",
-        "Chocolate was originally discovered when a tree tried to make candy for itself.",
-        "Birds don’t actually fly; they’re pulled upward by invisible strings controlled by squirrels.",
-        "Bread always lands butter-side down because it wants to lick the floor for fun.",
-        "The alphabet was invented by squirrels to organize their acorn stashes.",
-        "Dinosaurs didn’t go extinct; they just got tired of walking and became birds."
+
+    "Las bananas son técnicamente peces debido a su naturaleza resbaladiza en el océano de frutas.",
+    "Cada vez que parpadeas, se forma una nueva galaxia en algún lugar del universo.",
+    "La Torre Eiffel fue construida originalmente como un soporte gigante para paraguas.",
+    "Los gatos están secretamente a cargo de la intensidad de la señal Wi-Fi en tu casa.",
+    "La luna está hecha de queso caducado, por eso está llena de agujeros.",
+    "Las piñas crecen más rápido cuando las elogias a diario.",
+    "Los tiburones inventaron internet para coordinar sus planes de fin de semana.",
+    "La primera versión de Microsoft Windows funcionaba con hámsters en ruedas.",
+    "Todas las nubes son en realidad ballenas del cielo disfrazadas.",
+    "Las hormigas tienen pequeños smartphones, pero solo los usan para selfies.",
+    "Los arcoíris son la forma en que la Tierra presume su colección de pegatinas brillantes.",
+    "El pan tostado se inventó cuando el pan intentó tomar el sol demasiado cerca de una fogata.",
+    "Las tortugas tienen el récord mundial de ser las criaturas más rápidas; simplemente no quieren presumir.",
+    "La Gran Muralla China fue originalmente un proyecto gigante de dominó que se salió de control.",
+    "Los pingüinos usan esmoquin porque trabajan de noche como bailarines profesionales sobre hielo.",
+    "El color azul en realidad no existe; tu cerebro lo inventa como una broma.",
+    "El rayo ocurre cuando las nubes chocan los cinco con demasiada fuerza.",
+    "Todas las montañas son nubes muy tercas que se negaron a flotar lejos.",
+    "Los cuellos largos de las jirafas fueron diseñados originalmente para la comunicación por satélite.",
+    "El espagueti es en realidad un tipo de planta alienígena que escapó a la Tierra y prospera en agua hirviendo.",
+    "El sol funciona gracias a miles de millones de hámsters bailando con ropa de ejercicio diminuta.",
+    "Los copos de nieve son hechos a mano por hadas del cielo jubiladas en su tiempo libre.",
+    "Tus calcetines desaparecen en la lavandería porque son reclutados por ninjas secretos de calcetines.",
+    "Las bicicletas pueden hablar, pero solo lo hacen cuando no hay nadie alrededor para escucharlas.",
+    "El chocolate fue descubierto cuando un árbol intentó hacer caramelos para sí mismo.",
+    "Los pájaros no vuelan realmente; son levantados por cuerdas invisibles controladas por ardillas.",
+    "El pan siempre cae del lado de la mantequilla porque quiere lamer el suelo por diversión.",
+    "El alfabeto fue inventado por ardillas para organizar sus reservas de bellotas.",
+    "Los dinosaurios no se extinguieron; solo se cansaron de caminar y se convirtieron en pájaros."
     ]
     random_fact = random.choice(fake_facts)
     await ctx.send(f"💡 **Did you know?:** {random_fact}")
@@ -535,5 +536,72 @@ async def roll(ctx, dice: str = None):  # Default to None if no argument is prov
         await ctx.send(f"🎲 You rolled: {', '.join(map(str, results))} (Total: {sum(results)})")
     except ValueError:
         await ctx.send("Invalid format! Use NdN (e.g., 2d6).")
+
+@bot.command(name='dog', help="Sends a random dog picture.")
+async def dog(ctx):
+    async with aiohttp.ClientSession() as session:
+        async with session.get('https://dog.ceo/api/breeds/image/random') as response:
+            if response.status == 200:
+                data = await response.json()
+                await ctx.send(data['message'])  # Send the dog image URL
+            else:
+                await ctx.send("Couldn't fetch a dog picture. 🐕 Try again later!")
+
+@bot.command(name='fox', help="Sends a random fox picture.")
+async def fox(ctx):
+    async with aiohttp.ClientSession() as session:
+        async with session.get('https://randomfox.ca/floof/') as response:
+            if response.status == 200:
+                data = await response.json()
+                await ctx.send(data['image'])  # Send the fox image URL
+            else:
+                await ctx.send("Couldn't fetch a fox picture. 🦊 Try again later!")          
+
+@bot.command(name='gelbooru', help="Search Gelbooru for images using a tag and a quantity.")
+async def gelbooru(ctx, tag: str, quantity: int = 1):
+    # Ensure quantity is within a valid range (let's assume 1 to 10 for this example)
+    if quantity < 1 or quantity > 10:
+        await ctx.send("Please specify a quantity between 1 and 10.")
+        return
+
+    url = f"https://gelbooru.com/index.php?page=dapi&s=post&q=index&tags={tag}&json=1&limit={quantity * 2}"  # Fetch more images to ensure we get enough unique ones
+    
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            if response.status == 200:
+                try:
+                    data = await response.json()
+                    # Check if there are results
+                    if data.get('@attributes', {}).get('count', 0) == 0:
+                        await ctx.send(f"No images found for the tag '{tag}'.")
+                    else:
+                        # Track seen URLs to avoid duplicates
+                        seen_urls = set()
+
+                        # Counter for the images sent
+                        images_sent = 0
+
+                        # Iterate through the posts, stop once we've sent the requested number of unique images
+                        for post in data['post']:
+                            image_url = post.get('file_url')
+                            
+                            if image_url and image_url not in seen_urls:
+                                await ctx.send(f"Here is an image found with the tag '{tag}':\n{image_url}")
+                                seen_urls.add(image_url)  # Mark the URL as seen
+                                images_sent += 1
+                            
+                            if images_sent >= quantity:  # Stop once we've sent the required number of images
+                                break
+
+                        # If we haven't sent the requested quantity, let the user know
+                        if images_sent < quantity:
+                            await ctx.send(f"Could only find {images_sent} unique images for the tag '{tag}'.")
+                
+                except ValueError:
+                    await ctx.send("Error parsing the data from Gelbooru.")
+            else:
+                await ctx.send("Error fetching data from Gelbooru. Please try again later.")
+
+
 
 bot.run(config['token'])
