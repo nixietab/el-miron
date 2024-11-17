@@ -79,80 +79,92 @@ async def on_ready():
     print(f"Bot is online! Credits: Bot developed by Nixietab. GitHub: https://github.com/nixietab/el-miron")
     scheduled_version_check.start()
 
-@bot.command(name='p', help='Plays a song or playlist from YouTube or a direct URL')
+@bot.command(name='p', help='Plays a song or playlist from YouTube, SoundCloud, or a direct URL')
 async def play(ctx, *, search: str):
     if ctx.author.id in blocked_users:
         await ctx.send(language_outputs.get("blocked_user", "You are not allowed to use this bot."))
         return
 
-    global is_counting_down
     if ctx.author.voice is None:
         await ctx.send(language_outputs["not_in_voice_channel"])
         return
-    
+
     voice_channel = ctx.author.voice.channel
     if ctx.voice_client is None:
         await voice_channel.connect()
 
     voice_client = ctx.voice_client
     is_youtube_url = re.match(r'https?://(www\.)?(youtube\.com|youtu\.?be)/.+', search)
+    is_soundcloud_url = re.match(r'https?://(www\.)?soundcloud\.com/.+', search)  # SoundCloud URL match
     is_direct_url = re.match(r'https?://.+\.(mp3|wav|ogg|flac|mp4)', search)  # Add other formats if needed
-    is_playlist = "list=" in search  # Detect if the URL has a playlist parameter
+    is_playlist = "list=" in search
 
     async with ctx.typing():
         try:
             if is_youtube_url and is_playlist:
-                # Handle playlists by retrieving all videos in the playlist
                 playlist_tracks = await load_playlist(search)
                 if not playlist_tracks:
                     await ctx.send("No tracks found in the playlist.")
                     return
-
-                # Add each track from the playlist to the queue
                 for player in playlist_tracks:
                     queue.append((player, player.title))
                     logging.info(f'Added "{player.title}" to queue.')
-                
                 await ctx.send(f"Added {len(playlist_tracks)} tracks from the playlist to the queue.")
             
             elif is_youtube_url:
-                # Single YouTube video
                 player = await YTDLSource.from_url(search, loop=bot.loop, stream=True)
                 if player is None:
                     await ctx.send("Failed to retrieve data from the URL.")
                     return
                 queue.append((player, player.title))
                 logging.info(f'Added "{player.title}" to queue.')
+
+            elif is_soundcloud_url:
+                # SoundCloud URL handling with yt-dlp
+                ydl_opts = {
+                    'format': 'worstaudio',
+                    'extractaudio': True,
+                    'audioquality': 1,
+                    'outtmpl': 'downloads/%(id)s.%(ext)s',  # Save to downloads directory (can be modified), but maybe will broke something
+                    'quiet': True,
+                }
+                with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+                    info_dict = ydl.extract_info(search, download=False)
+                    url2 = info_dict['url']
+                    title = info_dict.get('title', 'Unknown Title')
+
+                    # Stream the audio URL using FFmpegPCMAudio
+                    source = discord.FFmpegPCMAudio(url2)
+                    
+                    # Add to the queue
+                    queue.append((source, title))  # Use the extracted title
+                    logging.info(f'Added SoundCloud track "{title}" to queue.')
+                    
+                    # Optionally, send a confirmation message to the user
+                    await ctx.send(f"Added {title} to the queue.")
 
             elif is_direct_url:
-                # Direct URL
-                player = await YTDLSource.from_url(search, loop=bot.loop, stream=True)
-                if player is None:
-                    await ctx.send("Failed to retrieve data from the URL.")
-                    return
-                queue.append((player, player.title))
-                logging.info(f'Added "{player.title}" to queue.')
+                source = discord.FFmpegPCMAudio(search)
+                queue.append((source, search))  # Use search as the title for now
+                logging.info(f'Added direct URL "{search}" to queue.')
 
             else:
-                # Search query
                 player = await YTDLSource.from_url(f"ytsearch:{search}", loop=bot.loop, stream=True)
                 if player is None:
                     await ctx.send("No results found for the query.")
                     return
                 queue.append((player, player.title))
                 logging.info(f'Added "{player.title}" to queue.')
-                
-        except ValueError:
-            await ctx.send("Error retrieving data.")
+
+        except ValueError as e:
+            await ctx.send(f"Error retrieving data: {e}")
             return
 
     if not voice_client.is_playing():
         await start_playback(ctx)
     else:
-        # Notify the user that the track or playlist was added to the queue
-        title = player.title if player else search
+        title = search if is_direct_url or is_soundcloud_url else player.title if player else search
         embed = discord.Embed(title=language_outputs["song_added"], description=title, color=0x00ff00)
-        embed.set_thumbnail(url=player.thumbnail if player and hasattr(player, "thumbnail") else "")
         await ctx.send(embed=embed)
 
 
