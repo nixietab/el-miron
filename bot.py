@@ -5,6 +5,7 @@ import aiohttp
 import asyncio
 import re
 import os
+import random
 import json
 import logging
 
@@ -471,37 +472,6 @@ async def scheduled_version_check():
         await check_version()
 
 voice_check_task = None  # Will hold the reference to the voice channel checking task
-
-
-@bot.command(name='search', help='Searches messages in the current channel and provides links to results')
-async def search_messages(self, ctx, search_term: str):
-        try:
-            # Fetching messages from the channel history with a limit
-            messages = [message async for message in ctx.channel.history(limit=1000) if search_term.lower() in message.content.lower()]
-
-            if not messages:
-                await ctx.send("No messages found with that search term.")
-                return
-
-            # Preparing embed
-            embed = discord.Embed(title=f"Search Results for '{search_term}'", color=discord.Color.blue())
-            embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.avatar.url)
-            
-            # Adding messages to the embed, truncating if necessary
-            for i, message in enumerate(messages[:5]):  # Limit to first 5 results for demonstration
-                content = message.content
-                if len(content) > 1024:
-                    content = content[:1021] + "..."
-                embed.add_field(name=f"Result {i + 1}", value=content, inline=False)
-            
-            await ctx.send(embed=embed)
-
-        except discord.HTTPException as e:
-            await ctx.send("There was an error sending the embed.")
-            print(f"HTTPException: {e}")
-        except Exception as e:
-            await ctx.send("An error occurred while searching messages.")
-            print(f"Exception: {e}")
 
 
 @bot.command(name='fact', help='spreads missinformation')
