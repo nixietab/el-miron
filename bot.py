@@ -4,6 +4,7 @@ import yt_dlp as youtube_dl
 import aiohttp
 import asyncio
 import re
+import time
 import os
 import random
 import json
@@ -510,6 +511,15 @@ async def fact(ctx):
     random_fact = random.choice(fake_facts)
     await ctx.send(f"💡 **Did you know?:** {random_fact}")
 
-
+@bot.command(name='ping', help='Responds with pong and shows the message send and receive times.')
+async def ping(ctx):
+    start_time = time.monotonic()  # Start time for the command execution
+    message = await ctx.send("🏓 Pong! Calculating latency...")  # Initial response
+    end_time = time.monotonic()  # End time for the send operation
+    
+    receive_latency = (end_time - start_time) * 1000  # Time it took to send the initial message
+    send_latency = (message.created_at.timestamp() - ctx.message.created_at.timestamp()) * 1000  # Time it took to process and respond
+    
+    await message.edit(content=f"🏓 Pong!\nReceive Latency: {receive_latency:.2f} ms\nSend Latency: {send_latency:.2f} ms")
 
 bot.run(config['token'])
