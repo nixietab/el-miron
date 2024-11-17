@@ -522,4 +522,18 @@ async def ping(ctx):
     
     await message.edit(content=f"🏓 Pong!\nReceive Latency: {receive_latency:.2f} ms\nSend Latency: {send_latency:.2f} ms")
 
+
+@bot.command(name='roll', help='Rolls dice in NdN format (e.g., 2d6).')
+async def roll(ctx, dice: str = None):  # Default to None if no argument is provided
+    if not dice:  # Check if dice is None or empty
+        await ctx.send("Please specify the dice to roll in NdN format (e.g., 2d6).")
+        return
+
+    try:
+        rolls, limit = map(int, dice.lower().split('d'))
+        results = [random.randint(1, limit) for _ in range(rolls)]
+        await ctx.send(f"🎲 You rolled: {', '.join(map(str, results))} (Total: {sum(results)})")
+    except ValueError:
+        await ctx.send("Invalid format! Use NdN (e.g., 2d6).")
+
 bot.run(config['token'])
