@@ -569,6 +569,20 @@ async def fox(ctx):
             else:
                 await ctx.send("Couldn't fetch a fox picture. 🦊 Try again later!")          
 
+@bot.command(name='cat', help="Sends a random cat picture.")
+async def cat(ctx):
+    async with aiohttp.ClientSession() as session:
+        async with session.get('https://api.thecatapi.com/v1/images/search') as response:
+            if response.status == 200:
+                data = await response.json()
+                await ctx.send(data[0]['url'])  # Send the cat image URL
+            else:
+                await ctx.send("Couldn't fetch a cat picture. 🐱 Try again later!")
+
+
+
+
+
 @bot.command(name='gelbooru', help="Search Gelbooru for images using a tag and a quantity.")
 async def gelbooru(ctx, tag: str, quantity: int = 1):
     # Ensure quantity is within a valid range (let's assume 1 to 10 for this example)
