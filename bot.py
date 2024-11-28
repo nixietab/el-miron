@@ -614,6 +614,82 @@ async def gelbooru(ctx, tag: str, quantity: int = 1):
             else:
                 await ctx.send("Error fetching data from Gelbooru. Please try again later.")
 
+@bot.command(name='avatar', help="Displays the avatar of a user.")
+async def avatar(ctx, member: discord.Member = None):
+    member = member or ctx.author
+    await ctx.send(f"{member.display_name}'s avatar: {member.avatar.url if member.avatar else 'No avatar available.'}")
+
+@bot.command(name='userinfo', help="Displays detailed information about a user.")
+async def userinfo(ctx, member: discord.Member = None):
+    member = member or ctx.author
+    roles = [role.mention for role in member.roles if role != ctx.guild.default_role]  # Exclude @everyone
+    embed = discord.Embed(
+        title=f"User Info: {member.display_name}",
+        color=member.color if member.color else discord.Color.default()
+    )
+
+    # Basic information
+    embed.set_thumbnail(url=member.avatar.url if member.avatar else "")
+    embed.add_field(name="Username", value=f"{member}", inline=True)
+    embed.add_field(name="User ID", value=member.id, inline=True)
+    embed.add_field(name="Bot?", value="Yes" if member.bot else "No", inline=True)
+
+    # Timestamps
+    embed.add_field(name="Account Created", value=member.created_at.strftime("%Y-%m-%d %H:%M:%S"), inline=True)
+    embed.add_field(name="Joined Server", value=member.joined_at.strftime("%Y-%m-%d %H:%M:%S"), inline=True)
+
+    # Roles
+    embed.add_field(name="Roles", value=", ".join(roles) if roles else "No roles", inline=False)
+
+    # Status
+    embed.add_field(name="Status", value=str(member.status).capitalize(), inline=True)
+    embed.add_field(name="Activity", value=f"{member.activity.name}" if member.activity else "None", inline=True)
+
+    # Boosting
+    if member.premium_since:
+        embed.add_field(name="Server Booster", value=member.premium_since.strftime("%Y-%m-%d %H:%M:%S"), inline=True)
+
+    await ctx.send(embed=embed)
+
+
+@bot.command()
+async def serverinfo(ctx):
+    guild = ctx.guild
+
+    embed = discord.Embed(
+        title=f"Server Info for {guild.name}",
+        color=discord.Color.blue()
+    )
+    embed.set_thumbnail(url=guild.icon.url if guild.icon else None)
+
+    # Basic information
+    embed.add_field(name="Server Name", value=guild.name, inline=False)
+    embed.add_field(name="Server ID", value=guild.id, inline=False)
+    embed.add_field(name="Owner", value=guild.owner, inline=False)
+    embed.add_field(name="Region", value=guild.preferred_locale, inline=False)
+    embed.add_field(name="Boost Tier", value=guild.premium_tier, inline=False)
+    embed.add_field(name="Boost Count", value=guild.premium_subscription_count, inline=False)
+    
+    # Member information
+    embed.add_field(name="Member Count", value=guild.member_count, inline=False)
+    embed.add_field(name="Online Members", value=len([m for m in guild.members if m.status != discord.Status.offline]), inline=False)
+
+    # Channels information
+    embed.add_field(name="Text Channels", value=len(guild.text_channels), inline=True)
+    embed.add_field(name="Voice Channels", value=len(guild.voice_channels), inline=True)
+    embed.add_field(name="Categories", value=len(guild.categories), inline=True)
+
+    # Roles and emojis
+    embed.add_field(name="Roles", value=len(guild.roles), inline=True)
+    embed.add_field(name="Emojis", value=len(guild.emojis), inline=True)
+    embed.add_field(name="Animated Emojis", value=len([e for e in guild.emojis if e.animated]), inline=True)
+
+    # Dates
+    embed.add_field(name="Created On", value=guild.created_at.strftime("%Y-%m-%d %H:%M:%S"), inline=False)
+
+    await ctx.send(embed=embed)
+
+
 
 
 bot.run(config['token'])
