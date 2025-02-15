@@ -579,6 +579,97 @@ async def cat(ctx):
             else:
                 await ctx.send("Couldn't fetch a cat picture. 🐱 Try again later!")
 
+@bot.command(name='banlist', help="Lists banned users and their usernames if available.")
+async def banlist(ctx):
+    blocked_users = load_blocked_users()
+    if not blocked_users:
+        await ctx.send("No users are currently banned.")
+        return
+
+    banned_users_list = []
+    for user_id in blocked_users:
+        user_info = f"ID: {user_id}"
+        try:
+            user = await bot.fetch_user(user_id)
+            username = user.name
+            user_info += f", Username: {username}"
+        except:
+            user_info += ", Username: Not found"
+        banned_users_list.append(user_info)
+
+    response = "\n".join(banned_users_list)
+    await ctx.send(f"Banned Users:\n{response}")
+
+@bot.command(name='ban', help="Bans a user by mention or user ID.")
+async def ban(ctx, user):
+    if not is_admin(ctx.author.id):
+        await ctx.send("You do not have permission to use this command.")
+        return
+
+    blocked_users = load_blocked_users()
+
+    try:
+        # Check if the input is a mention
+        if user.startswith('<@') and user.endswith('>'):
+            user_id = int(user[2:-1])
+        else:
+            user_id = int(user)
+
+        if user_id not in blocked_users:
+            blocked_users.append(user_id)
+            save_blocked_users(blocked_users)
+            await ctx.send(f"User ID {user_id} has been banned.")
+        else:
+            await ctx.send(f"User ID {user_id} is already banned.")
+    except:
+        await ctx.send("Invalid user mention or user ID.")
+
+@bot.command(name='unban', help="Unbans a user by mention or user ID.")
+async def unban(ctx, user):
+    if not is_admin(ctx.author.id):
+        await ctx.send("You do not have permission to use this command.")
+        return
+
+    blocked_users = load_blocked_users()
+
+    try:
+        # Check if the input is a mention
+        if user.startswith('<@') and user.endswith('>'):
+            user_id = int(user[2:-1])
+        else:
+            user_id = int(user)
+
+        if user_id in blocked_users:
+            blocked_users.remove(user_id)
+            save_blocked_users(blocked_users)
+            await ctx.send(f"User ID {user_id} has been unbanned.")
+        else:
+            await ctx.send(f"User ID {user_id} is not banned.")
+    except:
+        await ctx.send("Invalid user mention or user ID.")
+
+
+def load_config():
+    with open('config.json', 'r') as f:
+        return json.load(f)
+
+# Load the blocked users from the config
+def load_blocked_users():
+    config = load_config()
+    return config.get('blocked_users', [])
+
+# Save the blocked users to the config file
+def save_blocked_users(blocked_users):
+    config = load_config()
+    config['blocked_users'] = blocked_users
+    with open('config.json', 'w') as f:
+        json.dump(config, f, indent=4)
+
+# Check if a user is an admin
+def is_admin(user_id):
+    config = load_config()
+    return user_id in config.get('adminID', [])
+
 
 
 
