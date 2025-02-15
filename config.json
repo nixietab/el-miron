@@ -15,7 +15,14 @@
         "default_search": "auto",
         "source_address": "0.0.0.0"
     },
-    "blocked_users": [437301631512608769, 987654321098765432],
+    "blocked_users": [
+        987654321098765431,
+        987654321098765432
+    ],
+    "adminID": [
+        852910873063718923,
+        987654321098765433
+    ],
     "language_outputs": {
         "not_in_voice_channel": "You need to be in a voice channel to use this command. 👽",
         "song_added": "Added to queue 👽",
