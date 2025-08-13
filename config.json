@@ -1,10 +1,10 @@
 {
     "token": "token here",
     "ffmpeg_options": {
-        "options": "-vn -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5"
+        "options": "-vn -ac 2 -reconnect 1 -maxrate 48k -reconnect_streamed 1 -reconnect_delay_max 15 -timeout 30000000 -tls_verify 0 -probesize 1M -fflags +discardcorrupt -flags low_delay"
     },
     "ytdl_format_options": {
-        "format": "bestaudio/best",
+        "format": "bestaudio[ext=mp3]/bestaudio/best",
         "outtmpl": "downloads/%(extractor)s-%(id)s-%(title)s.%(ext)s",
         "restrictfilenames": true,
         "noplaylist": true,
@@ -15,21 +15,13 @@
         "default_search": "auto",
         "source_address": "0.0.0.0"
     },
-    "blocked_users": [
-        987654321098765431,
-        987654321098765432
-    ],
-    "adminID": [
-        852910873063718923,
-        987654321098765433
-    ],
     "language_outputs": {
-        "not_in_voice_channel": "You need to be in a voice channel to use this command. 👽",
-        "song_added": "Added to queue 👽",
-        "now_playing": "Now playing 👽",
-        "song_skipped": "Song skipped. 👽",
-        "no_song_playing": "No song is currently playing. 👽",
-        "music_stopped": "Music stopped and the queue is cleared. 👽",
+        "not_in_voice_channel": "You need to be in a voice channel to use this command.",
+        "song_added": "Added to queue",
+        "now_playing": "Now playing",
+        "song_skipped": "Song skipped.",
+        "no_song_playing": "No song is currently playing.",
+        "music_stopped": "Music stopped and the queue is cleared.",
         "currently_playing": "Currently Playing:",
         "queue_title": "Music Queue 🎶",
         "no_song_playing": "No song is currently playing.",
@@ -39,7 +31,6 @@
         "up_next": "Up Next:",
         "no_songs_in_queue": "No songs in the queue."
     },
-    "custom_idle_presence": "Zeeke Zooble 👽",
-    "check_updates": true
+    "custom_idle_presence": "This works with fucking fire and stones"
 
 }
