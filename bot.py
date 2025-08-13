@@ -1,10 +1,8 @@
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
 import yt_dlp as youtube_dl
-import aiohttp
 import asyncio
 import re
-import random
 import time
 import os
 import json
@@ -14,11 +12,10 @@ import logging
 with open('config.json') as config_file:
     config = json.load(config_file)
 
-blocked_users = config.get("blocked_users", [])
 language_outputs = config.get("language_outputs", {})
-
-# Load or initialize statistics from stats.json
 stats_path = 'stats.json'
+
+# Load or initialize statistics
 if os.path.exists(stats_path):
     with open(stats_path) as stats_file:
         stats = json.load(stats_file)
@@ -30,7 +27,7 @@ else:
     with open(stats_path, 'w') as stats_file:
         json.dump(stats, stats_file)
 
-# Set up logging to bot.log file
+# Set up logging
 logging.basicConfig(
     filename='bot.log',
     level=logging.INFO,
@@ -42,12 +39,56 @@ bot = commands.Bot(command_prefix='.', intents=intents)
 
 ffmpeg_options = config.get("ffmpeg_options", {"options": "-vn"})
 ytdl_format_options = config.get("ytdl_format_options", {"format": "bestaudio/best", "retries": 3, "nocheckcertificate": True})
-language_outputs = config.get("language_outputs", {})
 custom_idle_presence = config.get("custom_idle_presence", "Listening for commands 👽")
 
 ytdl = youtube_dl.YoutubeDL(ytdl_format_options)
-queue = []
-is_counting_down = False
+
+# --- Per-guild state ---
+# Dict: guild_id -> { 'queue': [...], 'is_counting_down': False, 'playing': False, 'current_title': None }
+guild_states = {}
+
+def get_guild_state(guild_id):
+    if guild_id not in guild_states:
+        guild_states[guild_id] = {
+            "queue": [],
+            "is_counting_down": False,
+            "playing": False,
+            "current_title": None
+        }
+    return guild_states[guild_id]
+
+def get_playing_guild_count():
+    return sum(
+        1 for state in guild_states.values()
+        if state.get("playing", False)
+    )
+
+async def update_bot_presence():
+    playing_count = get_playing_guild_count()
+    if playing_count == 0:
+        await bot.change_presence(activity=discord.Activity(
+            type=discord.ActivityType.playing,
+            name=custom_idle_presence
+        ))
+    elif playing_count == 1:
+        # Show the song title of the only playing guild
+        for state in guild_states.values():
+            if state.get("playing", False) and state.get("current_title"):
+                await bot.change_presence(activity=discord.Activity(
+                    type=discord.ActivityType.listening,
+                    name=state["current_title"]
+                ))
+                return
+        # Fallback
+        await bot.change_presence(activity=discord.Activity(
+            type=discord.ActivityType.listening,
+            name="a song"
+        ))
+    else:
+        await bot.change_presence(activity=discord.Activity(
+            type=discord.ActivityType.listening,
+            name=f"music in {playing_count} servers"
+        ))
 
 class YTDLSource(discord.PCMVolumeTransformer):
     def __init__(self, source, *, data, volume=0.5):
@@ -56,7 +97,7 @@ class YTDLSource(discord.PCMVolumeTransformer):
         self.title = data.get('title')
         self.url = data.get('url')
         self.thumbnail = data.get('thumbnail')
-        self.duration = data.get('duration', 0)  # Duration in seconds
+        self.duration = data.get('duration', 0)
 
     @classmethod
     async def from_url(cls, url, *, loop=None, stream=False):
@@ -64,8 +105,7 @@ class YTDLSource(discord.PCMVolumeTransformer):
         try:
             data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=not stream))
             if 'entries' in data:
-                data = data['entries'][0]  # Handle playlists by selecting the first entry
-
+                data = data['entries'][0]
             filename = data['url'] if stream else ytdl.prepare_filename(data)
             return cls(discord.FFmpegPCMAudio(filename, **ffmpeg_options), data=data)
         except Exception as e:
@@ -75,18 +115,15 @@ class YTDLSource(discord.PCMVolumeTransformer):
 @bot.event
 async def on_ready():
     logging.info(f'Bot connected as {bot.user}')
-    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.playing, name=custom_idle_presence))
+    await update_bot_presence()
     print(f"Bot is online! Credits: Bot developed by Nixietab. GitHub: https://github.com/nixietab/el-miron")
-    scheduled_version_check.start()
 
 @bot.command(name='p', help='Plays a song or playlist from YouTube, SoundCloud, or a direct URL')
 async def play(ctx, *, search: str):
-    if ctx.author.id in blocked_users:
-        await ctx.send(language_outputs.get("blocked_user", "You are not allowed to use this bot."))
-        return
+    state = get_guild_state(ctx.guild.id)
 
     if ctx.author.voice is None:
-        await ctx.send(language_outputs["not_in_voice_channel"])
+        await ctx.send(language_outputs.get("not_in_voice_channel", "You are not in a voice channel."))
         return
 
     voice_channel = ctx.author.voice.channel
@@ -94,244 +131,211 @@ async def play(ctx, *, search: str):
         await voice_channel.connect()
 
     voice_client = ctx.voice_client
-    is_youtube_url = re.match(r'https?://(www\.)?(youtube\.com|youtu\.?be)/.+', search)
-    is_soundcloud_url = re.match(r'https?://(www\.)?soundcloud\.com/.+', search)  # SoundCloud URL match
-    is_direct_url = re.match(r'https?://.+\.(mp3|wav|ogg|flac|mp4)', search)  # Add other formats if needed
+    is_url = bool(re.match(r'https?://.+', search))
     is_playlist = "list=" in search
 
     async with ctx.typing():
         try:
-            if is_youtube_url and is_playlist:
+            if is_playlist:
                 playlist_tracks = await load_playlist(search)
                 if not playlist_tracks:
                     await ctx.send("No tracks found in the playlist.")
                     return
                 for player in playlist_tracks:
-                    queue.append((player, player.title))
-                    logging.info(f'Added "{player.title}" to queue.')
+                    state['queue'].append((player, player.title))
+                    logging.info(f'Added "{player.title}" to queue for guild {ctx.guild.id}.')
                 await ctx.send(f"Added {len(playlist_tracks)} tracks from the playlist to the queue.")
-            
-            elif is_youtube_url:
+            else:
+                # If not a URL, search on YouTube
+                if not is_url:
+                    search = f"ytsearch:{search}"
+
                 player = await YTDLSource.from_url(search, loop=bot.loop, stream=True)
                 if player is None:
                     await ctx.send("Failed to retrieve data from the URL.")
                     return
-                queue.append((player, player.title))
-                logging.info(f'Added "{player.title}" to queue.')
+                state['queue'].append((player, player.title))
+                logging.info(f'Added "{player.title}" to queue for guild {ctx.guild.id}.')
 
-            elif is_soundcloud_url:
-                # SoundCloud URL handling with yt-dlp
-                ydl_opts = {
-                    'format': 'worstaudio',
-                    'extractaudio': True,
-                    'audioquality': 1,
-                    'outtmpl': 'downloads/%(id)s.%(ext)s',  # Save to downloads directory (can be modified), but maybe will broke something
-                    'quiet': True,
-                }
-                with youtube_dl.YoutubeDL(ydl_opts) as ydl:
-                    info_dict = ydl.extract_info(search, download=False)
-                    url2 = info_dict['url']
-                    title = info_dict.get('title', 'Unknown Title')
-
-                    # Stream the audio URL using FFmpegPCMAudio
-                    source = discord.FFmpegPCMAudio(url2)
-                    
-                    # Add to the queue
-                    queue.append((source, title))  # Use the extracted title
-                    logging.info(f'Added SoundCloud track "{title}" to queue.')
-                    
-                    # Optionally, send a confirmation message to the user
-                    await ctx.send(f"Added {title} to the queue.")
-
-            elif is_direct_url:
-                source = discord.FFmpegPCMAudio(search)
-                queue.append((source, search))  # Use search as the title for now
-                logging.info(f'Added direct URL "{search}" to queue.')
-
-            else:
-                player = await YTDLSource.from_url(f"ytsearch:{search}", loop=bot.loop, stream=True)
-                if player is None:
-                    await ctx.send("No results found for the query.")
-                    return
-                queue.append((player, player.title))
-                logging.info(f'Added "{player.title}" to queue.')
-
-        except ValueError as e:
-            await ctx.send(f"Error retrieving data: {e}")
+        except Exception as e:
+            await ctx.send(f"Error retrieving data: {str(e)}")
             return
 
     if not voice_client.is_playing():
         await start_playback(ctx)
     else:
-        title = search if is_direct_url or is_soundcloud_url else player.title if player else search
-        embed = discord.Embed(title=language_outputs["song_added"], description=title, color=0x00ff00)
+        title = player.title if 'player' in locals() else search
+        embed = discord.Embed(
+            title=language_outputs.get("song_added", "Song Added"),
+            description=title,
+            color=0x00ff00
+        )
         await ctx.send(embed=embed)
 
-
 async def load_playlist(playlist_url):
-    """
-    This function will load all videos from a playlist URL asynchronously.
-    You can use youtube_dl or other methods to fetch video URLs.
-    """
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, lambda: get_playlist_videos(playlist_url))
 
-
 def get_playlist_videos(playlist_url):
-    """
-    Fetch all videos from a YouTube playlist.
-    This function is synchronous because youtube_dl requires synchronous calls.
-    """
     ydl_opts = {
         'format': 'bestaudio/best',
-        'noplaylist': False,  # This ensures the entire playlist is downloaded
-        'extract_flat': True,  # Prevent downloading video files, just extract the video info
+        'noplaylist': False,
+        'extract_flat': True
     }
-
-    with yt_dlp(ydl_opts) as ydl:
+    with youtube_dl.YoutubeDL(ydl_opts) as ydl:
         info_dict = ydl.extract_info(playlist_url, download=False)
         if 'entries' not in info_dict:
             return []
-        # Return list of video objects for the playlist
-        return [YTDLSource.from_info(entry, loop=bot.loop) for entry in info_dict['entries']]
+        result = []
+        for entry in info_dict['entries']:
+            try:
+                with youtube_dl.YoutubeDL(ytdl_format_options) as ydl_full:
+                    full = ydl_full.extract_info(entry['url'], download=False)
+                    filename = full['url']
+                    source = YTDLSource(discord.FFmpegPCMAudio(filename, **ffmpeg_options), data=full)
+                    result.append(source)
+            except Exception:
+                continue
+        return result
 
 async def start_playback(ctx):
-    global is_counting_down
-    if queue:
-        is_counting_down = False
-        player, title = queue.pop(0)
-        
-        # Attempt to play the audio
-        ctx.voice_client.play(player, after=lambda e: bot.loop.create_task(play_next(ctx)) if e is None else print(f'Player error: {e}'))
-        
+    state = get_guild_state(ctx.guild.id)
+    if state['queue']:
+        player, title = state['queue'].pop(0)
+        state["playing"] = True
+        state["current_title"] = title
+
+        def after_playing(e):
+            fut = play_next(ctx)
+            asyncio.run_coroutine_threadsafe(fut, bot.loop)
+
+        ctx.voice_client.play(player, after=after_playing)
+
         # Update stats
         stats["total_songs_played"] += 1
-        stats["total_hours_played"] += player.duration / 3600  # Convert seconds to hours
-
-        # Save stats to file
+        stats["total_hours_played"] += player.duration / 3600
         with open(stats_path, 'w') as stats_file:
             json.dump(stats, stats_file)
 
-        # Log the playback start
-        logging.info(f'Now playing: "{title}". Total songs played: {stats["total_songs_played"]}. Total hours played: {round(stats["total_hours_played"], 2)} hours.')
+        logging.info(f'Now playing: "{title}" in guild {ctx.guild.id}. Total songs: {stats["total_songs_played"]}. Total hours: {round(stats["total_hours_played"], 2)}.')
 
-        # Prepare the "Now Playing" embed
-        embed = discord.Embed(title=language_outputs["now_playing"], description=title, color=0x00ff00)
+        embed = discord.Embed(
+            title=language_outputs.get("now_playing", "Now Playing"),
+            description=title,
+            color=0x00ff00
+        )
         if isinstance(player, YTDLSource):
             embed.set_thumbnail(url=player.thumbnail)
-
-        # Send the "Now Playing" embed asynchronously
         asyncio.create_task(ctx.send(embed=embed))
-
-        # Update Discord presence asynchronously
-        asyncio.create_task(bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name=title)))
+        await update_bot_presence()
     else:
+        state["playing"] = False
+        state["current_title"] = None
+        await update_bot_presence()
         await handle_empty_queue(ctx)
 
-
-
 async def play_next(ctx):
-    if queue:
+    state = get_guild_state(ctx.guild.id)
+    if state['queue']:
         await start_playback(ctx)
     else:
+        state["playing"] = False
+        state["current_title"] = None
+        await update_bot_presence()
         await handle_empty_queue(ctx)
 
 async def handle_empty_queue(ctx):
-    global is_counting_down
-    if not is_counting_down:
-        is_counting_down = True
-        await ctx.send(language_outputs["queue_empty"])
+    state = get_guild_state(ctx.guild.id)
+    if not state['is_counting_down']:
+        state['is_counting_down'] = True
+        await ctx.send(language_outputs.get("queue_empty", "The queue is empty."))
         await asyncio.sleep(3)
-        if is_counting_down and ctx.voice_client and not ctx.voice_client.is_connected():
+        if state['is_counting_down'] and ctx.voice_client and ctx.voice_client.is_connected():
             try:
-                await ctx.voice_client.connect(reconnect=True)
+                await ctx.voice_client.disconnect()
             except discord.ClientException:
-                logging.info("Attempted reconnection failed.")
-        elif is_counting_down and ctx.voice_client:
-            await ctx.voice_client.disconnect()
-        is_counting_down = False
-        await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.playing, name=custom_idle_presence))
+                logging.info(f"Disconnect failed in guild {ctx.guild.id}.")
+        state['is_counting_down'] = False
+        state["playing"] = False
+        state["current_title"] = None
+        await update_bot_presence()
 
 @bot.command(name='skip', help='Skips the current song')
 async def skip(ctx):
-    if ctx.author.id in blocked_users:
-        print(f"Blocked user {ctx.author.id} tried to skip.")  # Debug: Log blocked access attempt
-        if "blocked_message" in language_outputs:
-            await ctx.send(language_outputs["blocked_message"])
-        else:
-            await ctx.send("You are blocked from using this bot.")  # Fallback message
-        return
-
-    # Continue with command if not blocked
     if ctx.voice_client and ctx.voice_client.is_playing():
         ctx.voice_client.stop()
         await ctx.send(language_outputs.get("song_skipped", "Song skipped. 👽"))
-        logging.info("Song skipped by user.")
+        logging.info(f"Song skipped by user in guild {ctx.guild.id}.")
     else:
         await ctx.send(language_outputs.get("no_song_playing", "No song is currently playing. 👽"))
 
 @bot.command(name='stop', help='Stops the music and clears the queue')
 async def stop(ctx):
-    if ctx.author.id in blocked_users:
-        await ctx.send(language_outputs["blocked_message"])
-        return
-
-    queue.clear()
+    state = get_guild_state(ctx.guild.id)
+    state['queue'].clear()
+    state["playing"] = False
+    state["current_title"] = None
     if ctx.voice_client:
         await ctx.voice_client.disconnect()
-    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.playing, name=config["custom_idle_presence"]))
-    await ctx.send(language_outputs["music_stopped"])
-    logging.info("Music stopped and queue cleared.")
+    await update_bot_presence()
+    await ctx.send(language_outputs.get("music_stopped", "Music stopped."))
+    logging.info(f"Music stopped and queue cleared in guild {ctx.guild.id}.")
 
 @bot.command(name='stats', help='Shows the total number of songs played and total hours of audio played')
 async def stats_command(ctx):
     total_songs = stats["total_songs_played"]
     total_hours = round(stats["total_hours_played"], 2)
     await ctx.send(f"Total songs played: {total_songs}\nTotal hours played: {total_hours} hours")
-    logging.info(f".stats command called. Total songs played: {total_songs}. Total hours played: {total_hours} hours.")
+    logging.info(f".stats command called in guild {ctx.guild.id}. Total songs played: {total_songs}. Total hours played: {total_hours} hours.")
 
 @bot.command(name='queue', help='Shows the current song and the queue')
 async def show_queue(ctx):
-    # Check if the user is blocked
-    if ctx.author.id in blocked_users:
-        await ctx.send(language_outputs.get("blocked_user", "You are not allowed to use this bot."))
-        return
+    state = get_guild_state(ctx.guild.id)
 
-    # Check if the bot is connected to a voice channel
     if not ctx.voice_client:
         await ctx.send(language_outputs.get("not_in_voice_channel", "I am not connected to a voice channel."))
         return
 
-    # Check if the queue is empty and nothing is playing
-    if not queue and not ctx.voice_client.is_playing():
+    if not state['queue'] and not ctx.voice_client.is_playing():
         empty_queue_message = language_outputs.get("empty_queue", "The queue is currently empty.")
         await ctx.send(empty_queue_message)
         return
 
-    # Create the embed for the queue
-    embed = discord.Embed(title=language_outputs.get("queue_title", "Music Queue 🎶"), color=0x00ff00)
-
-    # Retrieve the currently playing song from voice client source
+    embed = discord.Embed(
+        title=language_outputs.get("queue_title", "Music Queue 🎶"),
+        color=0x00ff00
+    )
     currently_playing_title = getattr(ctx.voice_client.source, "title", None)
 
-    # Display the currently playing song if available
     if currently_playing_title:
-        embed.add_field(name=language_outputs.get("currently_playing", "Currently Playing:"), value=currently_playing_title, inline=False)
+        embed.add_field(
+            name=language_outputs.get("currently_playing", "Currently Playing:"),
+            value=currently_playing_title,
+            inline=False
+        )
     else:
-        embed.add_field(name=language_outputs.get("currently_playing", "Currently Playing:"), value=language_outputs.get("no_song_playing", "No song is currently playing."), inline=False)
+        embed.add_field(
+            name=language_outputs.get("currently_playing", "Currently Playing:"),
+            value=language_outputs.get("no_song_playing", "No song is currently playing."),
+            inline=False
+        )
 
-    # Display the queue list, excluding the currently playing song if it matches the first song in the queue
-    if queue:
-        # Start the queue display after the currently playing song if it matches the first in the queue
-        up_next_songs = queue[1:] if currently_playing_title and queue[0][1] == currently_playing_title else queue
+    if state['queue']:
+        up_next_songs = state['queue'][1:] if currently_playing_title and state['queue'][0][1] == currently_playing_title else state['queue']
         queue_list = "\n".join([f"{i+1}. {song[1]}" for i, song in enumerate(up_next_songs)])
-        
         if queue_list:
-            embed.add_field(name=language_outputs.get("up_next", "Up Next:"), value=queue_list, inline=False)
+            embed.add_field(
+                name=language_outputs.get("up_next", "Up Next:"),
+                value=queue_list,
+                inline=False
+            )
     else:
-        embed.add_field(name=language_outputs.get("up_next", "Up Next:"), value=language_outputs.get("no_songs_in_queue", "No songs in the queue."), inline=False)
+        embed.add_field(
+            name=language_outputs.get("up_next", "Up Next:"),
+            value=language_outputs.get("no_songs_in_queue", "No songs in the queue."),
+            inline=False
+        )
 
-    # Send the embed message
     await ctx.send(embed=embed)
 
 @bot.command(name='config', help='Displays the current bot configuration')
@@ -340,38 +344,28 @@ async def show_config(ctx):
         with open('config.json') as config_file:
             config_data = json.load(config_file)
 
-        # Filter the dictionary to include only the specified categories
         filtered_config = {
             key: config_data[key]
             for key in ['ffmpeg_options', 'ytdl_format_options', 'language_outputs']
             if key in config_data
         }
 
-        # Prepare the formatted message
         message = ""
-
-        # Verbosely display ffmpeg_options
         if 'ffmpeg_options' in filtered_config:
             message += "## FFmpeg Options:\n"
             for option, value in filtered_config['ffmpeg_options'].items():
                 message += f"- {option}: {value}\n"
             message += "\n"
-
-        # Verbosely display ytdl_format_options
         if 'ytdl_format_options' in filtered_config:
             message += "## yt-dlp Options:\n"
             for option, value in filtered_config['ytdl_format_options'].items():
                 message += f"- {option}: {value}\n"
             message += "\n"
-
-        # Verbosely display language_outputs
         if 'language_outputs' in filtered_config:
             message += "## Language Outputs:\n"
             for language, output in filtered_config['language_outputs'].items():
                 message += f"- {language}: {output}\n"
             message += "\n"
-
-        # Send the message in chunks if it exceeds 2000 characters
         if len(message) > 2000:
             for i in range(0, len(message), 2000):
                 await ctx.send(f"\n{message[i:i+2000]}")
@@ -382,419 +376,64 @@ async def show_config(ctx):
         logging.error(f"Failed to load config.json: {e}")
         await ctx.send("Error loading the configuration file.")
 
-version_url = 'https://raw.githubusercontent.com/nixietab/el-miron/refs/heads/main/version.json'
-
-# Path to local version.json file
-local_version_file = 'version.json'
-
-# Path to config.json file
-config_file = 'config.json'
-
-# Store the last channel the bot interacted with
-last_interacted_channel = None
-
-# Read the config.json file to check if update checks are enabled
-def read_config():
-    if os.path.exists(config_file):
-        with open(config_file, 'r') as f:
-            config_data = json.load(f)
-            return config_data.get('check_updates', True)
-    return True  # Default to True if config doesn't exist
-
-# Function to read local version from file
-def read_local_version():
-    if os.path.exists(local_version_file):
-        with open(local_version_file, 'r') as f:
-            local_data = json.load(f)
-            return local_data.get('version', None)
-    return None
-
-# Send a version update message to the chosen channel
-async def send_version_message(channel, new_version, local_version):
-    try:
-        # Send the message with emojis, alerts, and both versions
-        await channel.send(
-            f"🚨 **New version available!** 🚨\n\n"
-            f"**New version**: {new_version}\n"
-            f"**Local version**: {local_version}\n\n"
-            f"Check it out here: https://github.com/nixietab/el-miron\n\n"
-            f"🔔 Update is recommended always because discord and youtube integrations are trash! 🔔"
-        )
-    except Exception as e:
-        print(f"Error sending message to channel {channel.name}: {e}")
-
-# Check version function
-async def check_version():
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(version_url) as response:
-                if response.status == 200:
-                    # Read the raw content as text (because GitHub serves it as plain text)
-                    raw_content = await response.text()
-
-                    try:
-                        # Try to parse the raw content as JSON
-                        version_data = json.loads(raw_content)
-                        remote_version = version_data.get("version")
-                        
-                        # Read local version
-                        local_version = read_local_version()
-                        
-                        # Compare versions
-                        if remote_version and local_version:
-                            if remote_version != local_version:
-                                print(f"New version detected! Remote: {remote_version}, Local: {local_version}")
-                                
-                                # Check for the channel to send the update message
-                                for guild in bot.guilds:
-                                    # First, check if there's a 'general' channel
-                                    general_channel = discord.utils.get(guild.text_channels, name="general")
-                                    if general_channel:
-                                        await send_version_message(general_channel, remote_version, local_version)
-                                    # If no 'general' channel, try the last interacted channel
-                                    elif last_interacted_channel:
-                                        await send_version_message(last_interacted_channel, remote_version, local_version)
-                                    # Fallback to the first text channel
-                                    else:
-                                        channel = guild.text_channels[0]
-                                        await send_version_message(channel, remote_version, local_version)
-                            else:
-                                print(f"Version is up-to-date: {local_version}")
-                        else:
-                            print("Failed to get valid version data.")
-                    except json.JSONDecodeError:
-                        print(f"Error: Failed to decode JSON from raw content: {raw_content}")
-                else:
-                    print(f"Failed to fetch version.json. Status code: {response.status}")
-    except Exception as e:
-        print(f"Error while checking version: {e}")
-
-# Event to track the last channel the bot interacted with
-@bot.event
-async def on_message(message):
-    global last_interacted_channel
-    # Only track messages that are not from the bot itself
-    if message.author != bot.user:
-        last_interacted_channel = message.channel
-    await bot.process_commands(message)
-
-# Scheduled task that runs every 24 hours
-@tasks.loop(hours=24)
-async def scheduled_version_check():
-    if read_config():  # Only check version if update checks are enabled in config.json
-        await check_version()
-
-voice_check_task = None  # Will hold the reference to the voice channel checking task
-
-
-@bot.command(name='fact', help='spreads missinformation')
-async def fact(ctx):
-    fake_facts = [
-
-    "Las bananas son técnicamente peces debido a su naturaleza resbaladiza en el océano de frutas.",
-    "Cada vez que parpadeas, se forma una nueva galaxia en algún lugar del universo.",
-    "La Torre Eiffel fue construida originalmente como un soporte gigante para paraguas.",
-    "Los gatos están secretamente a cargo de la intensidad de la señal Wi-Fi en tu casa.",
-    "La luna está hecha de queso caducado, por eso está llena de agujeros.",
-    "Las piñas crecen más rápido cuando las elogias a diario.",
-    "Los tiburones inventaron internet para coordinar sus planes de fin de semana.",
-    "La primera versión de Microsoft Windows funcionaba con hámsters en ruedas.",
-    "Todas las nubes son en realidad ballenas del cielo disfrazadas.",
-    "Las hormigas tienen pequeños smartphones, pero solo los usan para selfies.",
-    "Los arcoíris son la forma en que la Tierra presume su colección de pegatinas brillantes.",
-    "El pan tostado se inventó cuando el pan intentó tomar el sol demasiado cerca de una fogata.",
-    "Las tortugas tienen el récord mundial de ser las criaturas más rápidas; simplemente no quieren presumir.",
-    "La Gran Muralla China fue originalmente un proyecto gigante de dominó que se salió de control.",
-    "Los pingüinos usan esmoquin porque trabajan de noche como bailarines profesionales sobre hielo.",
-    "El color azul en realidad no existe; tu cerebro lo inventa como una broma.",
-    "El rayo ocurre cuando las nubes chocan los cinco con demasiada fuerza.",
-    "Todas las montañas son nubes muy tercas que se negaron a flotar lejos.",
-    "Los cuellos largos de las jirafas fueron diseñados originalmente para la comunicación por satélite.",
-    "El espagueti es en realidad un tipo de planta alienígena que escapó a la Tierra y prospera en agua hirviendo.",
-    "El sol funciona gracias a miles de millones de hámsters bailando con ropa de ejercicio diminuta.",
-    "Los copos de nieve son hechos a mano por hadas del cielo jubiladas en su tiempo libre.",
-    "Tus calcetines desaparecen en la lavandería porque son reclutados por ninjas secretos de calcetines.",
-    "Las bicicletas pueden hablar, pero solo lo hacen cuando no hay nadie alrededor para escucharlas.",
-    "El chocolate fue descubierto cuando un árbol intentó hacer caramelos para sí mismo.",
-    "Los pájaros no vuelan realmente; son levantados por cuerdas invisibles controladas por ardillas.",
-    "El pan siempre cae del lado de la mantequilla porque quiere lamer el suelo por diversión.",
-    "El alfabeto fue inventado por ardillas para organizar sus reservas de bellotas.",
-    "Los dinosaurios no se extinguieron; solo se cansaron de caminar y se convirtieron en pájaros."
-    ]
-    random_fact = random.choice(fake_facts)
-    await ctx.send(f"💡 **Did you know?:** {random_fact}")
-
 @bot.command(name='ping', help='Responds with pong and shows the message send and receive times.')
 async def ping(ctx):
-    start_time = time.monotonic()  # Start time for the command execution
-    message = await ctx.send("🏓 Pong! Calculating latency...")  # Initial response
-    end_time = time.monotonic()  # End time for the send operation
-    
-    receive_latency = (end_time - start_time) * 1000  # Time it took to send the initial message
-    send_latency = (message.created_at.timestamp() - ctx.message.created_at.timestamp()) * 1000  # Time it took to process and respond
-    
+    start_time = time.monotonic()
+    message = await ctx.send("🏓 Pong! Calculating latency...")
+    end_time = time.monotonic()
+    receive_latency = (end_time - start_time) * 1000
+    send_latency = (message.created_at.timestamp() - ctx.message.created_at.timestamp()) * 1000
     await message.edit(content=f"🏓 Pong!\nReceive Latency: {receive_latency:.2f} ms\nSend Latency: {send_latency:.2f} ms")
 
-
-@bot.command(name='roll', help='Rolls dice in NdN format (e.g., 2d6).')
-async def roll(ctx, dice: str = None):  # Default to None if no argument is provided
-    if not dice:  # Check if dice is None or empty
-        await ctx.send("Please specify the dice to roll in NdN format (e.g., 2d6).")
-        return
-
-    try:
-        rolls, limit = map(int, dice.lower().split('d'))
-        results = [random.randint(1, limit) for _ in range(rolls)]
-        await ctx.send(f"🎲 You rolled: {', '.join(map(str, results))} (Total: {sum(results)})")
-    except ValueError:
-        await ctx.send("Invalid format! Use NdN (e.g., 2d6).")
-
-@bot.command(name='dog', help="Sends a random dog picture.")
-async def dog(ctx):
-    async with aiohttp.ClientSession() as session:
-        async with session.get('https://dog.ceo/api/breeds/image/random') as response:
-            if response.status == 200:
-                data = await response.json()
-                await ctx.send(data['message'])  # Send the dog image URL
-            else:
-                await ctx.send("Couldn't fetch a dog picture. 🐕 Try again later!")
-
-@bot.command(name='fox', help="Sends a random fox picture.")
-async def fox(ctx):
-    async with aiohttp.ClientSession() as session:
-        async with session.get('https://randomfox.ca/floof/') as response:
-            if response.status == 200:
-                data = await response.json()
-                await ctx.send(data['image'])  # Send the fox image URL
-            else:
-                await ctx.send("Couldn't fetch a fox picture. 🦊 Try again later!")          
-
-@bot.command(name='cat', help="Sends a random cat picture.")
-async def cat(ctx):
-    async with aiohttp.ClientSession() as session:
-        async with session.get('https://api.thecatapi.com/v1/images/search') as response:
-            if response.status == 200:
-                data = await response.json()
-                await ctx.send(data[0]['url'])  # Send the cat image URL
-            else:
-                await ctx.send("Couldn't fetch a cat picture. 🐱 Try again later!")
-
-@bot.command(name='banlist', help="Lists banned users and their usernames if available.")
-async def banlist(ctx):
-    blocked_users = load_blocked_users()
-    if not blocked_users:
-        await ctx.send("No users are currently banned.")
-        return
-
-    banned_users_list = []
-    for user_id in blocked_users:
-        user_info = f"ID: {user_id}"
-        try:
-            user = await bot.fetch_user(user_id)
-            username = user.name
-            user_info += f", Username: {username}"
-        except:
-            user_info += ", Username: Not found"
-        banned_users_list.append(user_info)
-
-    response = "\n".join(banned_users_list)
-    await ctx.send(f"Banned Users:\n{response}")
-
-@bot.command(name='ban', help="Bans a user by mention or user ID.")
-async def ban(ctx, user):
-    if not is_admin(ctx.author.id):
-        await ctx.send("You do not have permission to use this command.")
-        return
-
-    blocked_users = load_blocked_users()
-
-    try:
-        # Check if the input is a mention
-        if user.startswith('<@') and user.endswith('>'):
-            user_id = int(user[2:-1])
-        else:
-            user_id = int(user)
-
-        if user_id not in blocked_users:
-            blocked_users.append(user_id)
-            save_blocked_users(blocked_users)
-            await ctx.send(f"User ID {user_id} has been banned.")
-        else:
-            await ctx.send(f"User ID {user_id} is already banned.")
-    except:
-        await ctx.send("Invalid user mention or user ID.")
-
-@bot.command(name='unban', help="Unbans a user by mention or user ID.")
-async def unban(ctx, user):
-    if not is_admin(ctx.author.id):
-        await ctx.send("You do not have permission to use this command.")
-        return
-
-    blocked_users = load_blocked_users()
-
-    try:
-        # Check if the input is a mention
-        if user.startswith('<@') and user.endswith('>'):
-            user_id = int(user[2:-1])
-        else:
-            user_id = int(user)
-
-        if user_id in blocked_users:
-            blocked_users.remove(user_id)
-            save_blocked_users(blocked_users)
-            await ctx.send(f"User ID {user_id} has been unbanned.")
-        else:
-            await ctx.send(f"User ID {user_id} is not banned.")
-    except:
-        await ctx.send("Invalid user mention or user ID.")
-
-
-def load_config():
-    with open('config.json', 'r') as f:
-        return json.load(f)
-
-# Load the blocked users from the config
-def load_blocked_users():
-    config = load_config()
-    return config.get('blocked_users', [])
-
-# Save the blocked users to the config file
-def save_blocked_users(blocked_users):
-    config = load_config()
-    config['blocked_users'] = blocked_users
-    with open('config.json', 'w') as f:
-        json.dump(config, f, indent=4)
-
-# Check if a user is an admin
-def is_admin(user_id):
-    config = load_config()
-    return user_id in config.get('adminID', [])
-
-
-
-
-
-@bot.command(name='gelbooru', help="Search Gelbooru for images using a tag and a quantity.")
-async def gelbooru(ctx, tag: str, quantity: int = 1):
-    # Ensure quantity is within a valid range (let's assume 1 to 10 for this example)
-    if quantity < 1 or quantity > 10:
-        await ctx.send("Please specify a quantity between 1 and 10.")
-        return
-
-    url = f"https://gelbooru.com/index.php?page=dapi&s=post&q=index&tags={tag}&json=1&limit={quantity * 2}"  # Fetch more images to ensure we get enough unique ones
-    
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as response:
-            if response.status == 200:
-                try:
-                    data = await response.json()
-                    # Check if there are results
-                    if data.get('@attributes', {}).get('count', 0) == 0:
-                        await ctx.send(f"No images found for the tag '{tag}'.")
-                    else:
-                        # Track seen URLs to avoid duplicates
-                        seen_urls = set()
-
-                        # Counter for the images sent
-                        images_sent = 0
-
-                        # Iterate through the posts, stop once we've sent the requested number of unique images
-                        for post in data['post']:
-                            image_url = post.get('file_url')
-                            
-                            if image_url and image_url not in seen_urls:
-                                await ctx.send(f"Here is an image found with the tag '{tag}':\n{image_url}")
-                                seen_urls.add(image_url)  # Mark the URL as seen
-                                images_sent += 1
-                            
-                            if images_sent >= quantity:  # Stop once we've sent the required number of images
-                                break
-
-                        # If we haven't sent the requested quantity, let the user know
-                        if images_sent < quantity:
-                            await ctx.send(f"Could only find {images_sent} unique images for the tag '{tag}'.")
-                
-                except ValueError:
-                    await ctx.send("Error parsing the data from Gelbooru.")
-            else:
-                await ctx.send("Error fetching data from Gelbooru. Please try again later.")
-
-@bot.command(name='avatar', help="Displays the avatar of a user.")
-async def avatar(ctx, member: discord.Member = None):
-    member = member or ctx.author
-    await ctx.send(f"{member.display_name}'s avatar: {member.avatar.url if member.avatar else 'No avatar available.'}")
-
-@bot.command(name='userinfo', help="Displays detailed information about a user.")
-async def userinfo(ctx, member: discord.Member = None):
-    member = member or ctx.author
-    roles = [role.mention for role in member.roles if role != ctx.guild.default_role]  # Exclude @everyone
-    embed = discord.Embed(
-        title=f"User Info: {member.display_name}",
-        color=member.color if member.color else discord.Color.default()
-    )
-
-    # Basic information
-    embed.set_thumbnail(url=member.avatar.url if member.avatar else "")
-    embed.add_field(name="Username", value=f"{member}", inline=True)
-    embed.add_field(name="User ID", value=member.id, inline=True)
-    embed.add_field(name="Bot?", value="Yes" if member.bot else "No", inline=True)
-
-    # Timestamps
-    embed.add_field(name="Account Created", value=member.created_at.strftime("%Y-%m-%d %H:%M:%S"), inline=True)
-    embed.add_field(name="Joined Server", value=member.joined_at.strftime("%Y-%m-%d %H:%M:%S"), inline=True)
-
-    # Roles
-    embed.add_field(name="Roles", value=", ".join(roles) if roles else "No roles", inline=False)
-
-    # Status
-    embed.add_field(name="Status", value=str(member.status).capitalize(), inline=True)
-    embed.add_field(name="Activity", value=f"{member.activity.name}" if member.activity else "None", inline=True)
-
-    # Boosting
-    if member.premium_since:
-        embed.add_field(name="Server Booster", value=member.premium_since.strftime("%Y-%m-%d %H:%M:%S"), inline=True)
-
-    await ctx.send(embed=embed)
-
+# Default name and avatar
+DEFAULT_NAME = "ElMiron"
+DEFAULT_AVATAR = "https://i.imgur.com/0snQXry.jpeg"
 
 @bot.command()
-async def serverinfo(ctx):
-    guild = ctx.guild
+async def pretend(ctx, *args):
+    await ctx.message.delete()
 
-    embed = discord.Embed(
-        title=f"Server Info for {guild.name}",
-        color=discord.Color.blue()
+    # Parse input manually
+    if len(args) == 0:
+        await ctx.send("❌ Usage: `!pretend [name (opt)] [avatar_url (opt)] <message>`", delete_after=5)
+        return
+
+    # Determine which arguments are present
+    if len(args) >= 3:
+        name = args[0]
+        avatar_url = args[1]
+        message = " ".join(args[2:])
+    elif len(args) == 2:
+        # Check if second arg looks like a URL
+        if args[1].startswith("http://") or args[1].startswith("https://"):
+            name = args[0]
+            avatar_url = args[1]
+            message = f""
+        else:
+            name = args[0]
+            avatar_url = DEFAULT_AVATAR
+            message = args[1]
+    else:  # Only one argument (the message)
+        name = DEFAULT_NAME
+        avatar_url = DEFAULT_AVATAR
+        message = args[0]
+
+    if not message.strip():
+        await ctx.send("❌ You must provide a message.", delete_after=5)
+        return
+
+    # Create or reuse webhook
+    webhooks = await ctx.channel.webhooks()
+    webhook = discord.utils.get(webhooks, name="PretendWebhook")
+    if webhook is None:
+        webhook = await ctx.channel.create_webhook(name="PretendWebhook")
+
+    # Send webhook message
+    await webhook.send(
+        content=message,
+        username=name,
+        avatar_url=avatar_url
     )
-    embed.set_thumbnail(url=guild.icon.url if guild.icon else None)
-
-    # Basic information
-    embed.add_field(name="Server Name", value=guild.name, inline=False)
-    embed.add_field(name="Server ID", value=guild.id, inline=False)
-    embed.add_field(name="Owner", value=guild.owner, inline=False)
-    embed.add_field(name="Region", value=guild.preferred_locale, inline=False)
-    embed.add_field(name="Boost Tier", value=guild.premium_tier, inline=False)
-    embed.add_field(name="Boost Count", value=guild.premium_subscription_count, inline=False)
-    
-    # Member information
-    embed.add_field(name="Member Count", value=guild.member_count, inline=False)
-    embed.add_field(name="Online Members", value=len([m for m in guild.members if m.status != discord.Status.offline]), inline=False)
-
-    # Channels information
-    embed.add_field(name="Text Channels", value=len(guild.text_channels), inline=True)
-    embed.add_field(name="Voice Channels", value=len(guild.voice_channels), inline=True)
-    embed.add_field(name="Categories", value=len(guild.categories), inline=True)
-
-    # Roles and emojis
-    embed.add_field(name="Roles", value=len(guild.roles), inline=True)
-    embed.add_field(name="Emojis", value=len(guild.emojis), inline=True)
-    embed.add_field(name="Animated Emojis", value=len([e for e in guild.emojis if e.animated]), inline=True)
-
-    # Dates
-    embed.add_field(name="Created On", value=guild.created_at.strftime("%Y-%m-%d %H:%M:%S"), inline=False)
-
-    await ctx.send(embed=embed)
-
-
 
 
 bot.run(config['token'])
